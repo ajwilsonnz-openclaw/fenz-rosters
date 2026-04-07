@@ -1,0 +1,13 @@
+TRUNCATE areas CASCADE;
+TRUNCATE watch_anchors CASCADE;
+TRUNCATE system_settings CASCADE;
+TRUNCATE station_distances CASCADE;
+TRUNCATE firefighters CASCADE;
+TRUNCATE district_relievers CASCADE;
+TRUNCATE allocation_runs CASCADE;
+TRUNCATE ot_offers CASCADE;
+TRUNCATE ot_assignments CASCADE;
+TRUNCATE ot_requests CASCADE;
+TRUNCATE ot_count_log CASCADE;
+TRUNCATE audit_logs CASCADE;
+TRUNCATE availability CASCADE;
