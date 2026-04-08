@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS stations (
     area_id INTEGER REFERENCES areas(id),
     is_specialist BOOLEAN DEFAULT FALSE,
     specialist_type VARCHAR(50),
+    district VARCHAR(50),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS ot_requests (
     date DATE NOT NULL,
     shift_type VARCHAR(10) NOT NULL, -- Day, Night
     specialist_type VARCHAR(50),
+    district VARCHAR(50),
     required_qualification_ids JSONB DEFAULT '[]',
     status VARCHAR(20) DEFAULT 'pending', -- pending, allocated, filled, cancelled
     number_of_slots INTEGER DEFAULT 1,

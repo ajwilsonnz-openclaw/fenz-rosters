@@ -37,7 +37,7 @@ export async function seedDatabase() {
   console.log('  ✅ Areas created');
 
   // --- 2. Stations ---
-  const stationMap: Record<string, { name: string; areaId: number; specialist?: boolean; specialistType?: string }> = {
+  const stationMap: Record<string, { name: string; areaId: number; district?: string; specialist?: boolean; specialistType?: string }> = {
     // Waitemata (North Shore + West)
     'Albany': { name: 'Albany', areaId: waitemataId },
     'Avondale': { name: 'Avondale', areaId: aucklandId },
@@ -49,7 +49,7 @@ export async function seedDatabase() {
     'Henderson': { name: 'Henderson', areaId: aucklandId },
     'Ponsonby': { name: 'Ponsonby', areaId: aucklandId },
     'Silverdale': { name: 'Silverdale', areaId: waitemataId },
-    'Te Atatu': { name: 'Te Atatu', areaId: aucklandId },
+    'Te Atatu': { name: 'Te Atatu', areaId: aucklandId, specialist: true, specialistType: 'type4' },
     'Titirangi': { name: 'Titirangi', areaId: aucklandId },
     'Warkworth': { name: 'Warkworth', areaId: waitemataId },
     'West Harbour': { name: 'West Harbour', areaId: aucklandId },
