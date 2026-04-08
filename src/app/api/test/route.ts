@@ -54,15 +54,15 @@ function getHumanStatus(watch: string, shift: string, callback: string | null, s
   if (requestShiftType === 'Night' && callback === '#2b-DayOfNight1') {
     return { label: 'Day Between', eligible: false, reason: 'Between Days — Night OT excluded' };
   }
-  // FIX #1: Blue/#1 = "Before Day1" (Callback pool), Green/Off = "Non-Callback"
-  if (callback === '#1-BeforeDay1') {
-    return { label: 'Before Day 1', eligible: true, reason: 'Callback #1 — eligible for Callback pool' };
+  // Blue = Before Day1 + Callback, Green = Non-Callback
+  if (watch === 'Blue' && callback === '#1-BeforeDay1') {
+    return { label: 'Before Day 1 (Callback)', eligible: true, reason: 'Blue #1 — eligible for Callback pool' };
   }
   if (callback) {
     return { label: `On Duty (${callback})`, eligible: true, reason: `Callback: ${callback}` };
   }
-  if (shift === 'Off') {
-    return { label: 'Non-Callback', eligible: true, reason: 'Off duty — eligible for Non-Callback pool' };
+  if (watch === 'Green' && shift === 'Off') {
+    return { label: 'Non-Callback', eligible: true, reason: 'Green Off — eligible for Non-Callback pool' };
   }
   if (shift === 'Day') {
     return { label: 'On Duty', eligible: true, reason: 'Day shift' };
