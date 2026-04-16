@@ -32,6 +32,27 @@ const SCENARIO_CONFIG = {
   ],
 };
 
+// Known-result test: Simple 1-station, 2-slot scenario
+// On 2026-04-10: Blue=#1 callback, Green=Off(no CB)
+// Expected: 2 Blue callback FF assigned, sorted by lowest OT then distance
+const KNOWN_RESULT_CONFIG = {
+  id: 'known-result-simple',
+  name: 'Known Result — Albany 2-slot',
+  date: '2026-04-10',
+  shift: 'Day' as const,
+  stations: [
+    { stationName: 'Albany', slots: 2, specialist: null },
+  ],
+  // Expected result: The 2 Blue Waitemata FF with lowest OT count, then closest distance to Albany
+  // After reset, all OT=0, so sort is by distance:
+  // Zoe Fletcher: Albany→Albany = 0km, Kate Sullivan: Silverdale→Albany = 4km
+  // Rongo Parata: Takapuna→Albany = 6km, Tipene Rata: Devonport→Albany = 15km
+  expectedAssignments: [
+    { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'might', reason: 'Lowest distance Blue Waitemata (0km, home station Albany)' },
+    { name: 'Kate Sullivan', watch: 'Blue', threshold: 'might', reason: 'Second closest Blue Waitemata (4km, Silverdale)' },
+  ],
+};
+
 // ━━━ Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function parseNzDate(dateStr: string): Date {
@@ -184,16 +205,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'OT counts reset' });
     }
 
-    const date = parseNzDate(SCENARIO_CONFIG.date);
+    // Select scenario based on request body
+    const scenarioId = body.scenario || 'default';
+    const SCENARIO = scenarioId === 'known-result' ? KNOWN_RESULT_CONFIG : SCENARIO_CONFIG;
+    const expectedAssignments = scenarioId === 'known-result' ? KNOWN_RESULT_CONFIG.expectedAssignments : null;
+
+    const date = parseNzDate(SCENARIO.date);
     await pool.query('TRUNCATE ot_assignments, ot_requests, allocation_runs CASCADE');
     await pool.query('UPDATE firefighters SET want_to_work_day = true, want_to_work_night = true');
 
-    // Resolve station IDs by name
+    // Resolve station IDs and districts by name
     const stationIdMap: Record<string, number> = {};
-    for (const sc of SCENARIO_CONFIG.stations) {
-      const res = await pool.query('SELECT id FROM stations WHERE name = $1', [sc.stationName]);
+    const stationDistrictMap: Record<string, string> = {};
+    for (const sc of SCENARIO.stations) {
+      const res = await pool.query(
+        'SELECT s.id, a.name as district FROM stations s JOIN areas a ON s.area_id = a.id WHERE s.name = $1',
+        [sc.stationName]
+      );
       if (res.rows.length === 0) throw new Error(`Station "${sc.stationName}" not found in DB`);
       stationIdMap[sc.stationName] = res.rows[0].id;
+      stationDistrictMap[sc.stationName] = res.rows[0].district;
     }
 
     // NOTE: OOD qualification overrides removed — engine now relies on seed data qualifications only.
@@ -205,7 +236,7 @@ export async function POST(request: NextRequest) {
     const distanceMatrix = await loadDistanceMatrix();
     const assignedIds = new Set<number>();
 
-    const watchMatrix = computeWatchMatrix(date, SCENARIO_CONFIG.shift);
+    const watchMatrix = computeWatchMatrix(date, SCENARIO.shift);
 
     const stationResults: StationResult[] = [];
     let totalAssigned = 0;
@@ -215,7 +246,7 @@ export async function POST(request: NextRequest) {
     // FIX #2: Collect all "Available Overtimes" — expanded per slot
     const availableOvertimes: { stationName: string; slots: number; specialist: string | null; reqId: number }[] = [];
 
-    for (const station of SCENARIO_CONFIG.stations) {
+    for (const station of SCENARIO.stations) {
       const stationId = stationIdMap[station.stationName];
       totalSlots += station.slots;
 
@@ -223,7 +254,7 @@ export async function POST(request: NextRequest) {
       const otReq = await pool.query(
         `INSERT INTO ot_requests (station_id, date, shift_type, specialist_type, number_of_slots, status, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING *`,
-        [stationId, date.toISOString().split('T')[0], SCENARIO_CONFIG.shift, station.specialist, station.slots, 'pending']
+        [stationId, date.toISOString().split('T')[0], SCENARIO.shift, station.specialist, station.slots, 'pending']
       );
       const otRequestId = otReq.rows[0].id;
 
@@ -236,10 +267,10 @@ export async function POST(request: NextRequest) {
         id: otRequestId,
         station_id: stationId,
         station_name: station.stationName,
-        station_district: null as string | null,
+        station_district: stationDistrictMap[station.stationName],
         area_id: 1,
         date: date.toISOString().split('T')[0],
-        shift_type: SCENARIO_CONFIG.shift as 'Day' | 'Night',
+        shift_type: SCENARIO.shift as 'Day' | 'Night',
         specialist_type: station.specialist,
         required_qualification_ids: [] as string[],
         status: 'pending',
@@ -313,9 +344,9 @@ export async function POST(request: NextRequest) {
       let cascadePhase = assignment?.cascadePhase || 'unassigned';
       if (shiftStatus.includes('On Leave')) {
         eligible = false; cascadePhase = 'locked_out';
-      } else if (callback === '#3-AfterLastNight' && SCENARIO_CONFIG.shift === 'Day') {
+      } else if (callback === '#3-AfterLastNight' && SCENARIO.shift === 'Day') {
         eligible = false; cascadePhase = 'locked_out';
-      } else if (callback === '#2a-EveningDay2' && SCENARIO_CONFIG.shift === 'Day') {
+      } else if (callback === '#2a-EveningDay2' && SCENARIO.shift === 'Day') {
         eligible = false; cascadePhase = 'locked_out';
       } else if (shift === 'Night' && !callback) {
         eligible = false; cascadePhase = 'locked_out';
@@ -360,11 +391,30 @@ export async function POST(request: NextRequest) {
       return (a.otDays + a.otNights) - (b.otDays + b.otNights);
     });
 
+    // Known-result validation
+    let knownResultCheck = null;
+    if (expectedAssignments) {
+      const actualNames = stationResults.flatMap(sr => sr.assignedFirefighters.map(af => af.name));
+      const expectedNames = expectedAssignments.map(e => e.name);
+      const passed = expectedNames.every((name, idx) => actualNames[idx] === name);
+      knownResultCheck = {
+        passed,
+        expected: expectedAssignments,
+        actual: actualNames,
+        mismatches: expectedNames.map((name, idx) => ({
+          position: idx,
+          expected: name,
+          actual: actualNames[idx] || '(empty)',
+          match: actualNames[idx] === name,
+        })).filter(m => !m.match),
+      };
+    }
+
     return NextResponse.json({
-      id: SCENARIO_CONFIG.id,
-      name: SCENARIO_CONFIG.name,
-      date: SCENARIO_CONFIG.date,
-      shift: SCENARIO_CONFIG.shift,
+      id: SCENARIO.id,
+      name: SCENARIO.name,
+      date: SCENARIO.date,
+      shift: SCENARIO.shift,
       watchMatrix,
       totalSlots,
       totalAssigned,
@@ -372,6 +422,7 @@ export async function POST(request: NextRequest) {
       allFirefightersDetail,
       phasesUsed: Array.from(allPhases),
       availableOvertimes,
+      ...(knownResultCheck ? { knownResultCheck } : {}),
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message, stack: err.stack }, { status: 500 });

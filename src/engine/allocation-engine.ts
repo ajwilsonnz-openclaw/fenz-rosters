@@ -1,9 +1,9 @@
 // FENZ Overtime Allocation Engine — Full Spec Implementation
 //
 // CASCADING ALLOCATION (the "10pm touch of a button" feature):
-// Phase 1 (callback)     → callback-eligible Waitemata firefighters
-// Phase 2 (non-callback) → Waitemata non-callback firefighters working the shift & wanting OT
-// Phase 3 (out-of-district) → 1 lowest-OT firefighter per non-Waitemata district
+// Phase 1 (callback)     → callback-eligible firefighters IN THE SAME DISTRICT
+// Phase 2 (non-callback) → same-district non-callback firefighters (off-duty, wanting OT)
+// Phase 3 (out-of-district) → 1 lowest-OT firefighter per OTHER district
 // Phase 4 (SO)           → All SO-rank firefighters who want to work
 // Phase 5 (SSO)          → All SSO-rank firefighters who want to work
 
@@ -164,6 +164,7 @@ export async function loadDistanceMatrix(): Promise<DistanceMatrix> {
 }
 
 export function getDistance(fromStationId: number, toStationId: number, matrix: DistanceMatrix): number {
+  if (fromStationId === toStationId) return 0;
   return matrix[fromStationId]?.[toStationId] ?? 999;
 }
 
@@ -209,7 +210,7 @@ export function canDoOT(ff: Firefighter, otDate: Date, requestShiftType: ShiftTy
 // Must / Might / Won't Threshold Calculation
 // ============================================================
 
-export function computeMustMightWonThreshold(candidates: Firefighter[], availableSlots: number): Map<number, MustMightWont> {
+export function computeMustMightWonThreshold(candidates: Firefighter[], availableSlots: number, distances?: Record<number, number>): Map<number, MustMightWont> {
   const result = new Map<number, MustMightWont>();
   if (candidates.length === 0) return result;
 
@@ -227,6 +228,10 @@ export function computeMustMightWonThreshold(candidates: Firefighter[], availabl
     if (allRemainingAreWonT) {
       for (const ff of group) result.set(ff.id, 'won_t');
       continue;
+    }
+    // Sort within group by distance when available (closest first)
+    if (distances) {
+      group.sort((a, b) => (distances[a.id] ?? 999) - (distances[b.id] ?? 999));
     }
     const newCumulative = cumulative + group.length;
     if (newCumulative <= availableSlots) {
@@ -329,10 +334,12 @@ function buildCascadePool(phase: CascadePhase, request: OTRequest, otDate: Date,
   let candidates: Firefighter[] = [];
 
   if (phase === 'callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 1: Callback Pool ━━━` });
+    traceLog.push({ type: 'header', message: `━━━ Phase 1: Callback Pool (${request.station_district || 'any'} district) ━━━` });
     candidates = allFirefighters.filter(ff => {
       if (assignedThisRun.has(ff.id)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: 'Already assigned this run' }); return false; }
       if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Missing qualifications' }); return false; }
+      // District restriction: callback pool only includes FFs from the requesting station's district
+      if (request.station_district && ff.district !== request.station_district) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: `${ff.district} district (need ${request.station_district})` }); return false; }
       const r = passesCallbackFilter(ff, otDate, request.shift_type);
       if (r.pass) { traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | shift=${getShift(ff.watch, otDate)} | cb=${getCallbackType(ff.watch, otDate)}` }); }
       else { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason }); }
@@ -340,11 +347,12 @@ function buildCascadePool(phase: CascadePhase, request: OTRequest, otDate: Date,
     });
   }
   else if (phase === 'non-callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 2: Non-Callback Waitemata ━━━` });
+    const reqDistrict = request.station_district || 'Waitemata';
+    traceLog.push({ type: 'header', message: `━━━ Phase 2: Non-Callback ${reqDistrict} ━━━` });
     candidates = allFirefighters.filter(ff => {
       if (assignedThisRun.has(ff.id)) return false;
       if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) return false;
-      if (ff.district !== 'Waitemata') { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.district} (not Waitemata)` }); return false; }
+      if (ff.district !== reqDistrict) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.district} (not ${reqDistrict})` }); return false; }
       const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
       if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | CB=${getCallbackType(ff.watch, otDate)} | OT=${ff.total_ot_count}` });
       else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
@@ -359,7 +367,7 @@ function buildCascadePool(phase: CascadePhase, request: OTRequest, otDate: Date,
       // CRITICAL: Universal watch eligibility — excludes Red #3, Brown #2a on Day shifts, etc.
       const watchCheck = canDoOT(ff, otDate, request.shift_type);
       if (!watchCheck.pass) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: watchCheck.reason }); return false; }
-      if (ff.district === 'Waitemata') return false;
+      if (ff.district === (request.station_district || 'Waitemata')) return false;
       if (request.shift_type === 'Day' && !ff.want_to_work_day) return false;
       if (request.shift_type === 'Night' && !ff.want_to_work_night) return false;
       return true;
@@ -401,7 +409,7 @@ function buildCascadePool(phase: CascadePhase, request: OTRequest, otDate: Date,
 
   const distances: Record<number, number> = {};
   for (const ff of candidates) distances[ff.id] = getDistance(ff.station_id, request.station_id, distanceMatrix);
-  const thresholds = computeMustMightWonThreshold(candidates, slotsRemaining);
+  const thresholds = computeMustMightWonThreshold(candidates, slotsRemaining, distances);
 
   return { phase, candidates, distances, thresholds, traceLog };
 }
@@ -418,7 +426,7 @@ async function assignFromPool(pool: CascadePool, results: AllocationResult[], as
     const bT = pool.thresholds.get(b.id) || 'won_t';
     if (thresholdOrder[aT] !== thresholdOrder[bT]) return thresholdOrder[aT] - thresholdOrder[bT];
     if (a.total_ot_count !== b.total_ot_count) return a.total_ot_count - b.total_ot_count;
-    return (pool.distances[a.id] || 999) - (pool.distances[b.id] || 999);
+    return (pool.distances[a.id] ?? 999) - (pool.distances[b.id] ?? 999);
   });
 
   let filled = 0;
@@ -435,7 +443,7 @@ async function assignFromPool(pool: CascadePool, results: AllocationResult[], as
     const assignmentRes = await dbExecute(
       `INSERT INTO ot_assignments (ot_request_id, firefighter_id, status, distance_km, callback_type, must_might_wont, hours_allocated, assigned_at)
        VALUES ($1, $2, 'assigned', $3, CAST($4 AS varchar), $5, $6, NOW()) RETURNING id`,
-      [request.id, ff.id, pool.distances[ff.id] || 0, callback || 'none', threshold, hours],
+      [request.id, ff.id, pool.distances[ff.id] ?? 0, callback || 'none', threshold, hours],
     );
     const assignmentId = assignmentRes.rows[0].id;
 
@@ -478,7 +486,7 @@ async function assignFromPool(pool: CascadePool, results: AllocationResult[], as
       firefighter_id: ff.id,
       firefighter_name: `${ff.first_name} ${ff.last_name}`,
       watch: ff.watch, rank: ff.rank,
-      distance_km: pool.distances[ff.id] || 0,
+      distance_km: pool.distances[ff.id] ?? 0,
       callback_type: callback,
       must_might_wont: threshold,
       hours_allocated: hours,
