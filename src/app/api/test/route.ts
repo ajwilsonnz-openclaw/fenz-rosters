@@ -35,7 +35,7 @@ const SCENARIO_CONFIG = {
 // Known-result test: Simple 1-station, 2-slot scenario
 // On 2026-04-10: Blue=#1 callback, Green=Off(no CB)
 // Expected: 2 Blue callback FF assigned, sorted by lowest OT then distance
-const KNOWN_RESULT_CONFIG = {
+const KNOWN_RESULT_SIMPLE = {
   id: 'known-result-simple',
   name: 'Known Result — Albany 2-slot',
   date: '2026-04-10',
@@ -43,13 +43,42 @@ const KNOWN_RESULT_CONFIG = {
   stations: [
     { stationName: 'Albany', slots: 2, specialist: null },
   ],
-  // Expected result: The 2 Blue Waitemata FF with lowest OT count, then closest distance to Albany
-  // After reset, all OT=0, so sort is by distance:
-  // Zoe Fletcher: Albany→Albany = 0km, Kate Sullivan: Silverdale→Albany = 4km
-  // Rongo Parata: Takapuna→Albany = 6km, Tipene Rata: Devonport→Albany = 15km
   expectedAssignments: [
     { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'might', reason: 'Lowest distance Blue Waitemata (0km, home station Albany)' },
     { name: 'Kate Sullivan', watch: 'Blue', threshold: 'might', reason: 'Second closest Blue Waitemata (4km, Silverdale)' },
+  ],
+};
+
+// Complex known-result: 3 stations, specialist requirement, cross-phase allocation
+// Tests: callback district restriction, specialist qualification filtering,
+//        cross-station assignedIds tracking, non-callback fallback
+//
+// Station processing order (sequential, shared assignedIds):
+//   1. Albany (2 slots, no spec) → Blue callback pool: Zoe(0km), Kate(4km), Rongo(6km), Tipene(15km)
+//      All OT=0 → sort by dist → Zoe + Kate assigned → Rongo/Tipene locked_out
+//   2. Silverdale (1 slot, prt required) → Blue CB: Rongo(no prt→skip), Tipene(no prt→skip) = 0 CB candidates
+//      → Green NC: Emma Chen(Albany→Silverdale=4km, prt✅), Sarah Mitchell(Devonport→Silverdale=19km, prt✅),
+//        Jordan Park(Silverdale=0km, NO prt→skip) → Emma assigned
+//   3. Takapuna (1 slot, no spec) → Blue CB: Rongo(Takapuna=0km), Tipene(Devonport=4km)
+//      → Rongo assigned
+const KNOWN_RESULT_COMPLEX = {
+  id: 'known-result-complex',
+  name: 'Known Result — 3 Stations + Specialist',
+  date: '2026-04-10',
+  shift: 'Day' as const,
+  stations: [
+    { stationName: 'Albany', slots: 2, specialist: null },
+    { stationName: 'Silverdale', slots: 1, specialist: 'prt' },
+    { stationName: 'Takapuna', slots: 1, specialist: null },
+  ],
+  expectedAssignments: [
+    // Albany: 2 closest Blue callback
+    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'callback', reason: 'Blue CB, Albany→Albany 0km' },
+    { name: 'Kate Sullivan', station: 'Albany', watch: 'Blue', phase: 'callback', reason: 'Blue CB, Silverdale→Albany 4km' },
+    // Silverdale: prt required, Blue CB exhausted of prt-qualified, falls to Green NC
+    { name: 'Emma Chen', station: 'Silverdale', watch: 'Green', phase: 'non-callback', reason: 'Green NC, Albany→Silverdale 4km, has prt' },
+    // Takapuna: remaining Blue CB
+    { name: 'Rongo Parata', station: 'Takapuna', watch: 'Blue', phase: 'callback', reason: 'Blue CB, Takapuna→Takapuna 0km' },
   ],
 };
 
@@ -207,8 +236,14 @@ export async function POST(request: NextRequest) {
 
     // Select scenario based on request body
     const scenarioId = body.scenario || 'default';
-    const SCENARIO = scenarioId === 'known-result' ? KNOWN_RESULT_CONFIG : SCENARIO_CONFIG;
-    const expectedAssignments = scenarioId === 'known-result' ? KNOWN_RESULT_CONFIG.expectedAssignments : null;
+    const scenarioMap: Record<string, { id: string; name: string; date: string; shift: 'Day' | 'Night'; stations: { stationName: string; slots: number; specialist: string | null }[]; expectedAssignments?: { name: string }[] }> = {
+      'default': SCENARIO_CONFIG,
+      'known-result': KNOWN_RESULT_SIMPLE,
+      'known-result-simple': KNOWN_RESULT_SIMPLE,
+      'known-result-complex': KNOWN_RESULT_COMPLEX,
+    };
+    const SCENARIO = scenarioMap[scenarioId] || SCENARIO_CONFIG;
+    const expectedAssignments = SCENARIO.expectedAssignments || null;
 
     const date = parseNzDate(SCENARIO.date);
     await pool.query('TRUNCATE ot_assignments, ot_requests, allocation_runs CASCADE');
