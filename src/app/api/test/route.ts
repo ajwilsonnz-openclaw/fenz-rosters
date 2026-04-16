@@ -18,19 +18,18 @@ const pool = new Pool({
 });
 
 // ━━━ SINGLE MULTI-STATION SCENARIO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const SCENARIO = {
+const SCENARIO_CONFIG = {
   id: 'waitemata-day',
-  name: 'Waitemata Day — 6 Stations',
+  name: 'Waitemata Day — 5 Stations',
   date: '2026-04-10',
   shift: 'Day' as const,
   stations: [
-    { stationId: 1175, stationName: 'Albany', slots: 3, specialist: null },
-    { stationId: 1176, stationName: 'Devonport', slots: 2, specialist: null },
-    { stationId: 1178, stationName: 'Silverdale', slots: 2, specialist: 'prt' },
-    { stationId: 1181, stationName: 'Takapuna', slots: 2, specialist: null },
-    { stationId: 1197, stationName: 'Henderson', slots: 2, specialist: 'prt' },
-    { stationId: 1200, stationName: 'Te Atatu', slots: 2, specialist: 'type4' },
-  ] as const,
+    { stationName: 'Albany', slots: 3, specialist: null },
+    { stationName: 'Devonport', slots: 2, specialist: null },
+    { stationName: 'Silverdale', slots: 2, specialist: null },
+    { stationName: 'Takapuna', slots: 2, specialist: null },
+    { stationName: 'East Coast Bays', slots: 2, specialist: null },
+  ],
 };
 
 // ━━━ Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -181,13 +180,21 @@ export async function POST(request: NextRequest) {
     if (body.action === 'reset_ot_counts') {
       await pool.query('UPDATE firefighters SET ot_count_days = 0, ot_count_nights = 0, ot_count_callback_days = 0, ot_count_callback_nights = 0, ot_count_noncallback_days = 0, ot_count_noncallback_nights = 0');
       await pool.query('TRUNCATE ot_assignments, ot_requests, allocation_runs CASCADE');
-      await pool.query(`UPDATE firefighters SET qualifications = '{}' WHERE station_id IN (SELECT id FROM stations WHERE district != 'Waitemata')`);
+      // NOTE: Do NOT wipe qualifications — they come from seed data and should persist
       return NextResponse.json({ success: true, message: 'OT counts reset' });
     }
 
-    const date = parseNzDate(SCENARIO.date);
+    const date = parseNzDate(SCENARIO_CONFIG.date);
     await pool.query('TRUNCATE ot_assignments, ot_requests, allocation_runs CASCADE');
     await pool.query('UPDATE firefighters SET want_to_work_day = true, want_to_work_night = true');
+
+    // Resolve station IDs by name
+    const stationIdMap: Record<string, number> = {};
+    for (const sc of SCENARIO_CONFIG.stations) {
+      const res = await pool.query('SELECT id FROM stations WHERE name = $1', [sc.stationName]);
+      if (res.rows.length === 0) throw new Error(`Station "${sc.stationName}" not found in DB`);
+      stationIdMap[sc.stationName] = res.rows[0].id;
+    }
 
     // NOTE: OOD qualification overrides removed — engine now relies on seed data qualifications only.
     // Home-station specialist quals are applied below.
@@ -198,7 +205,7 @@ export async function POST(request: NextRequest) {
     const distanceMatrix = await loadDistanceMatrix();
     const assignedIds = new Set<number>();
 
-    const watchMatrix = computeWatchMatrix(date, SCENARIO.shift);
+    const watchMatrix = computeWatchMatrix(date, SCENARIO_CONFIG.shift);
 
     const stationResults: StationResult[] = [];
     let totalAssigned = 0;
@@ -208,14 +215,15 @@ export async function POST(request: NextRequest) {
     // FIX #2: Collect all "Available Overtimes" — expanded per slot
     const availableOvertimes: { stationName: string; slots: number; specialist: string | null; reqId: number }[] = [];
 
-    for (const station of SCENARIO.stations) {
+    for (const station of SCENARIO_CONFIG.stations) {
+      const stationId = stationIdMap[station.stationName];
       totalSlots += station.slots;
 
       // Insert OT request
       const otReq = await pool.query(
         `INSERT INTO ot_requests (station_id, date, shift_type, specialist_type, number_of_slots, status, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING *`,
-        [station.stationId, date.toISOString().split('T')[0], SCENARIO.shift, station.specialist, station.slots, 'pending']
+        [stationId, date.toISOString().split('T')[0], SCENARIO_CONFIG.shift, station.specialist, station.slots, 'pending']
       );
       const otRequestId = otReq.rows[0].id;
 
@@ -226,12 +234,12 @@ export async function POST(request: NextRequest) {
 
       const request = {
         id: otRequestId,
-        station_id: station.stationId,
+        station_id: stationId,
         station_name: station.stationName,
         station_district: null as string | null,
         area_id: 1,
         date: date.toISOString().split('T')[0],
-        shift_type: SCENARIO.shift as 'Day' | 'Night',
+        shift_type: SCENARIO_CONFIG.shift as 'Day' | 'Night',
         specialist_type: station.specialist,
         required_qualification_ids: [] as string[],
         status: 'pending',
@@ -255,7 +263,7 @@ export async function POST(request: NextRequest) {
 
       stationResults.push({
         stationName: station.stationName,
-        stationId: station.stationId,
+        stationId: stationId,
         slots: station.slots,
         specialist: station.specialist,
         traceLogs,
@@ -305,9 +313,9 @@ export async function POST(request: NextRequest) {
       let cascadePhase = assignment?.cascadePhase || 'unassigned';
       if (shiftStatus.includes('On Leave')) {
         eligible = false; cascadePhase = 'locked_out';
-      } else if (callback === '#3-AfterLastNight' && SCENARIO.shift === 'Day') {
+      } else if (callback === '#3-AfterLastNight' && SCENARIO_CONFIG.shift === 'Day') {
         eligible = false; cascadePhase = 'locked_out';
-      } else if (callback === '#2a-EveningDay2' && SCENARIO.shift === 'Day') {
+      } else if (callback === '#2a-EveningDay2' && SCENARIO_CONFIG.shift === 'Day') {
         eligible = false; cascadePhase = 'locked_out';
       } else if (shift === 'Night' && !callback) {
         eligible = false; cascadePhase = 'locked_out';
@@ -353,10 +361,10 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({
-      id: SCENARIO.id,
-      name: SCENARIO.name,
-      date: SCENARIO.date,
-      shift: SCENARIO.shift,
+      id: SCENARIO_CONFIG.id,
+      name: SCENARIO_CONFIG.name,
+      date: SCENARIO_CONFIG.date,
+      shift: SCENARIO_CONFIG.shift,
       watchMatrix,
       totalSlots,
       totalAssigned,
