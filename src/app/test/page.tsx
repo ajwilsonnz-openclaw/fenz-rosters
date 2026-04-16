@@ -4,118 +4,120 @@ import { useState } from 'react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface TraceStep {
-  phase: string;
-  message: string;
-  detail?: string;
-  badge: 'info' | 'pass' | 'reject' | 'assign' | 'warn';
-  indent?: number;
-}
-
-interface DebugTraceCandidate {
-  id: number;
-  name: string;
-  watch: string;
-  station: string;
-  stationId: number;
-  rank: string;
-  otDays: number;
-  otNights: number;
-  totalOt: number;
-  shift: string;
-  callback: string | null;
-  distance: number;
-  threshold: string;
-  qualifications: Record<string, boolean>;
-  isAssigned: boolean;
-  isEligible: boolean;
-  filterReason?: string;
-}
-
-interface DebugTrace {
-  steps: TraceStep[];
-  candidates: DebugTraceCandidate[];
-  summary: {
-    totalCandidates: number;
-    passedFilter: number;
-    mustCount: number;
-    mightCount: number;
-    lockedOutCount: number;
-    wontCount: number;
-    assigned: number;
-    slotsRequested: number;
-    slotsFilled: number;
-    slotsUnfilled: number;
-  };
-}
-
 interface AssignedFF {
   name: string;
+  id: number;
   watch: string;
   rank: string;
   threshold: string;
-  distance?: number;
+  distance: number;
+  homeStation: string;
+  cascadePhase: string;
+  callback: string | null;
+  qualifications: string[];
+  stolenFrom?: string;
 }
 
-interface FirefighterDetail {
-  name: string;
-  watch: string;
-  shift: string;
-  callback: string | null;
-  onLeave: boolean;
-  qualifications: Record<string, boolean>;
-  otCountDays: number;
-  otCountNights: number;
-  isEligible: boolean;
-  isAssigned: boolean;
-  filterReason: string;
+interface StationResult {
+  stationName: string;
+  stationId: number;
+  slots: number;
+  specialist: string | null;
+  assignedFirefighters: AssignedFF[];
+  phasesUsed: string[];
+  traceLogs?: { phase: string; logs: { type: string; message: string; detail?: string }[] }[];
 }
 
 interface WatchMatrixEntry {
+  watch: string;
   shift: string;
+  statusLabel: string;
   onLeave: boolean;
   callback: string | null;
   eligible: boolean;
   reason: string;
 }
 
-interface TestResult {
-  id: string;
+interface FFDetail {
+  id: number;
   name: string;
-  shouldHappen: string;
-  passed: boolean;
-  actualWatcher: string | null;
-  expectedWatcher: string | null;
-  assignmentsCount: number;
-  expectedSlots: number;
-  eligiblePoolSize: number;
-  assigned: AssignedFF[];
-  allFirefightersDetail: DebugTraceCandidate[];
-  watchMatrix: WatchMatrixEntry[];
-  debugTrace: DebugTrace | null;
-  errors: string[];
+  watch: string;
+  rank: string;
+  homeStation: string;
+  otStation: string;
+  distance: number;
+  otDays: number;
+  otNights: number;
+  isAssigned: boolean;
+  isEligible: boolean;
+  cascadePhase: string;
+  callback: string | null;
+  quals: string[];
+  stolenFrom: string | null;
+  threshold: string;
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+interface KnownResultCheck {
+  passed: boolean;
+  expected: { name: string }[];
+  actual: string[];
+  mismatches: { position: number; expected: string; actual: string; match: boolean }[];
+}
 
-const SCENARIOS = [
-  { id: 'blue-callback', name: 'Blue Callback — April 10 Day Shift', date: '2026-04-10', shift: 'Day', slots: 1, shouldHappen: 'Blue has Callback #1 (Off before Day 1). Brown on regular Day, non-callback, filtered out. Red is Night + #3 (night-only). Green Off, non-callback. Only Blue eligible.' },
-  { id: 'partial-fill', name: 'Partial Fill — April 10 Day × 8 slots', date: '2026-04-10', shift: 'Day', slots: 8, shouldHappen: "Only Blue callback eligible (5 FFs). All Blue assigned, remaining slots unfilled." },
-  { id: 'green-callback', name: 'Green Callback #1 — April 12 Day Shift', date: '2026-04-12', shift: 'Day', slots: 1, shouldHappen: "Green has Callback #1 (Off before Day 1). Red Off, non-callback. Brown Night + #3 (night-only). Blue Day + #2a (excluded). Only Green." },
-  { id: 'no-eligible', name: 'No Eligible — April 13 Day Shift', date: '2026-04-13', shift: 'Day', slots: 1, shouldHappen: "No callbacks on April 13. Green regular Day, non-callback. Blue Night+#2b. Red/Brown Off, non-callback. ZERO assignments." },
-  { id: 'leave-exclusion', name: 'Leave Exclusion — Feb 10 All On Leave', date: '2026-02-10', shift: 'Day', slots: 1, shouldHappen: 'All 4 watches in Leave 1 block (cycle position < 16). NO ONE should be assigned.' },
-];
-
-interface ScenarioDef {
+interface TestAPIResponse {
   id: string;
   name: string;
   date: string;
   shift: string;
-  slots: number;
-  shouldHappen: string;
+  totalSlots: number;
+  totalAssigned: number;
+  watchMatrix: WatchMatrixEntry[];
+  stationResults: StationResult[];
+  allFirefightersDetail: FFDetail[];
+  phasesUsed: string[];
+  knownResultCheck?: KnownResultCheck;
+  error?: string;
 }
 
-const WATCH_NAMES = ['Green', 'Red', 'Brown', 'Blue'] as const;
+// ─── Scenario Definitions ───────────────────────────────────────────────────
+
+interface ScenarioDef {
+  id: string;
+  apiKey: string; // Value sent as { scenario: apiKey }
+  name: string;
+  description: string;
+  expectedResult: string;
+  stations: string;
+}
+
+const SCENARIOS: ScenarioDef[] = [
+  {
+    id: 'default',
+    apiKey: 'default',
+    name: 'Waitemata Day — 5 Stations (11 slots)',
+    description: 'Full 5-station Waitemata OT request for April 10 Day shift. Blue watch has callback #1, Green is off-duty. Tests the complete cascade: callback → non-callback → out-of-district.',
+    expectedResult: '11/11 slots filled. Blue=4 (callback), Green=5-7 (non-callback + OOD). No Red/Brown (excluded).',
+    stations: 'Albany(3), Devonport(2), Silverdale(2), Takapuna(2), East Coast Bays(2)',
+  },
+  {
+    id: 'known-result-simple',
+    apiKey: 'known-result-simple',
+    name: 'Known Result — Albany 2-slot',
+    description: 'Simple 1-station test. Albany needs 2 FFs, no specialist. Only Blue Waitemata callback FFs eligible. With all OT counts at 0, the 2 closest FFs should be assigned.',
+    expectedResult: 'Zoe Fletcher (Albany→Albany, 0km) + Kate Sullivan (Silverdale→Albany, 4km)',
+    stations: 'Albany(2)',
+  },
+  {
+    id: 'known-result-complex',
+    apiKey: 'known-result-complex',
+    name: 'Known Result — 3 Stations + Specialist',
+    description: 'Multi-station test with specialist qualification requirement. Albany needs 2 (no spec), Silverdale needs 1 with PRT qualification, Takapuna needs 1 (no spec). Tests callback exhaustion, specialist filtering, cross-station tracking, and phase fallback.',
+    expectedResult: 'Albany: Zoe+Kate (Blue CB). Silverdale: Emma Chen (Green NC, has PRT). Takapuna: Rongo Parata (Blue CB, home station).',
+    stations: 'Albany(2), Silverdale(1,prt), Takapuna(1)',
+  },
+];
+
+// ─── Constants ───────────────────────────────────────────────────────────────
 
 const WATCH_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   Green: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/30' },
@@ -124,13 +126,31 @@ const WATCH_COLORS: Record<string, { bg: string; text: string; border: string }>
   Blue:  { bg: 'bg-blue-500/10',  text: 'text-blue-400',  border: 'border-blue-500/30' },
 };
 
+const PHASE_COLORS: Record<string, { bg: string; text: string }> = {
+  callback:           { bg: 'bg-blue-500/15',    text: 'text-blue-400' },
+  'non-callback':     { bg: 'bg-green-500/15',   text: 'text-green-400' },
+  'out-of-district':  { bg: 'bg-orange-500/15',  text: 'text-orange-400' },
+  'specialist-steal': { bg: 'bg-purple-500/15',  text: 'text-purple-400' },
+  SO:                 { bg: 'bg-yellow-500/15',  text: 'text-yellow-400' },
+  SSO:                { bg: 'bg-red-500/15',     text: 'text-red-400' },
+};
+
 // ─── Badge Components ───────────────────────────────────────────────────────
 
 function WatchBadge({ watch }: { watch: string }) {
-  const color = WATCH_COLORS[watch];
+  const color = WATCH_COLORS[watch] || { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/30' };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${color.bg} ${color.text} ${color.border}`}>
       {watch}
+    </span>
+  );
+}
+
+function PhaseBadge({ phase }: { phase: string }) {
+  const c = PHASE_COLORS[phase] || { bg: 'bg-gray-500/15', text: 'text-gray-400' };
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${c.bg} ${c.text}`}>
+      {phase}
     </span>
   );
 }
@@ -150,107 +170,33 @@ function ThresholdBadge({ threshold }: { threshold: string }) {
   );
 }
 
-// ─── Step-by-step trace renderer ────────────────────────────────────────────
+// ─── Trace Log Renderer ────────────────────────────────────────────────────
 
-function TraceRenderer({ trace }: { trace: DebugTrace }) {
-  const badgeColor: Record<string, string> = {
-    info:   'text-blue-400',
+function TraceLogRenderer({ traceLogs }: { traceLogs: { phase: string; logs: { type: string; message: string; detail?: string }[] }[] }) {
+  const typeColors: Record<string, string> = {
+    header: 'text-blue-400 font-semibold',
     pass:   'text-emerald-400',
-    reject: 'text-red-400/80',
-    assign: 'text-green-400',
-    warn:   'text-amber-400',
-  };
-  const phaseIcons: Record<string, string> = {
-    filter: '🔍', threshold: '📊', assign: '⚙️', summary: '🏁',
+    skip:   'text-gray-500',
+    assign: 'text-green-400 font-medium',
   };
 
   return (
-    <div className="mt-4">
-      <div className="bg-gray-950/80 rounded-lg border border-gray-700/50 font-mono text-xs overflow-hidden">
-        {/* Summary bar */}
-        <div className="flex flex-wrap gap-3 px-4 py-2 bg-gray-800/60 border-b border-gray-700/50 text-gray-300">
-          <span>🎯 {trace.summary.assigned}/{trace.summary.slotsRequested} filled</span>
-          {trace.summary.slotsUnfilled > 0 && <span className="text-amber-400">({trace.summary.slotsUnfilled} unfilled)</span>}
-          <span className="ml-auto flex gap-2">
-            {trace.summary.mustCount > 0 && <span className="text-emerald-400">● {trace.summary.mustCount} must</span>}
-            {trace.summary.mightCount > 0 && <span className="text-amber-400">● {trace.summary.mightCount} might</span>}
-            {trace.summary.lockedOutCount > 0 && <span className="text-orange-400">● {trace.summary.lockedOutCount} locked</span>}
-            {trace.summary.wontCount > 0 && <span className="text-gray-400">● {trace.summary.wontCount} won't</span>}
-          </span>
-        </div>
-
-        {/* Steps */}
-        <div className="p-3 space-y-0.5 max-h-[600px] overflow-y-auto">
-          {trace.steps.map((step, i) => {
-            const indent = step.indent ? 'ml-4 '.repeat(step.indent) : '';
-            const isPhaseHeader = step.message.startsWith('━');
-            return (
-              <div key={i} className={`flex items-start gap-2 py-1 ${isPhaseHeader ? 'border-b border-gray-700/30 pb-1 mb-1' : ''}`}>
-                <span className="text-gray-500 select-none w-8 shrink-0 text-right">{phaseIcons[step.phase] || ''}</span>
-                <div>
-                  <span className={indent + ' ' + (isPhaseHeader ? (badgeColor[step.badge] || 'text-gray-400') + ' font-semibold' : (badgeColor[step.badge] || 'text-gray-300'))}>
-                    {step.message}
-                  </span>
-                  {step.detail && (
-                    <div className={indent + 'text-gray-500 mt-0.5'}>{step.detail}</div>
-                  )}
-                </div>
+    <div className="bg-gray-950/80 rounded-lg border border-gray-700/50 font-mono text-xs overflow-hidden max-h-[500px] overflow-y-auto">
+      {traceLogs.map((phaseGroup, pi) => (
+        <div key={pi} className="border-b border-gray-800/50 last:border-0">
+          {phaseGroup.logs.map((log, li) => (
+            <div key={li} className={`flex items-start gap-2 px-3 py-1 ${log.type === 'header' ? 'bg-gray-800/40' : ''}`}>
+              <span className="text-gray-600 w-4 shrink-0">
+                {log.type === 'assign' ? '✓' : log.type === 'skip' ? '·' : log.type === 'header' ? '▸' : '•'}
+              </span>
+              <div>
+                <span className={typeColors[log.type] || 'text-gray-400'}>{log.message}</span>
+                {log.detail && <div className="text-gray-600 mt-0.5">{log.detail}</div>}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
-      </div>
-
-      {/* Candidate table */}
-      <details className="mt-3 group">
-        <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-400 select-none">
-          📋 Full Firefighter Table
-        </summary>
-        <div className="mt-2 bg-gray-800/50 rounded-lg overflow-x-auto border border-gray-700/50">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-700/50 bg-gray-800/70">
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Status</th>
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Name</th>
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Watch</th>
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Shift</th>
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Callback</th>
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Station</th>
-                <th className="text-center py-2 px-2 text-gray-400 font-medium">Distance</th>
-                <th className="text-center py-2 px-2 text-gray-400 font-medium">OT</th>
-                <th className="text-left py-2 px-2 text-gray-400 font-medium">Threshold</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trace.candidates
-                .sort((a, b) => {
-                  const order = { assigned: 0, eligible: 1, excluded: 2 };
-                  const aStatus = a.isAssigned ? 'assigned' : a.isEligible ? 'eligible' : 'excluded';
-                  const bStatus = b.isAssigned ? 'assigned' : b.isEligible ? 'eligible' : 'excluded';
-                  return (order[aStatus] - order[bStatus]) || a.watch.localeCompare(b.watch);
-                })
-                .map((ff: DebugTraceCandidate, i: number) => {
-                  const status = ff.isAssigned ? '🟢' : ff.isEligible ? '🟡' : '⏸️';
-                  const rowBg = ff.isAssigned ? 'bg-green-900/20' : ff.isEligible ? 'bg-yellow-900/10' : '';
-                  const quals = Object.entries(ff.qualifications || {}).filter(([,v]) => v).map(([k]) => k).join(', ') || '—';
-                  return (
-                    <tr key={i} className={`border-b border-gray-800/30 ${rowBg}`}>
-                      <td className="py-1.5 px-2 text-center text-sm">{status}</td>
-                      <td className="py-1.5 px-2 text-gray-200 font-medium">{ff.name}</td>
-                      <td className="py-1.5 px-2"><WatchBadge watch={ff.watch} /></td>
-                      <td className="py-1.5 px-2 font-mono text-gray-300">{ff.shift}</td>
-                      <td className="py-1.5 px-2 font-mono text-gray-400">{ff.callback || '—'}</td>
-                      <td className="py-1.5 px-2 text-gray-400">{ff.station}</td>
-                      <td className="py-1.5 px-2 font-mono text-center text-gray-400">{ff.distance === 999 ? '???' : ff.distance + ' km'}</td>
-                      <td className="py-1.5 px-2 font-mono text-center text-gray-400">{ff.otDays}D/{ff.otNights}N</td>
-                      <td className="py-1.5 px-2"><ThresholdBadge threshold={ff.threshold} /></td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </table>
-        </div>
-      </details>
+      ))}
     </div>
   );
 }
@@ -264,17 +210,22 @@ function TestCard({
   running,
 }: {
   scenario: ScenarioDef;
-  result?: TestResult;
+  result?: TestAPIResponse;
   onRun: (id: string) => void;
   running: boolean;
 }) {
+  const hasResult = !!result;
+  const kr = result?.knownResultCheck;
+  const allFilled = result ? result.totalAssigned === result.totalSlots : false;
+  const passed = kr ? kr.passed : allFilled;
+
   return (
-    <div className={`rounded-2xl border transition-all ${result ? (result.passed ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5') : 'border-gray-700/50 bg-gray-800/20'}`}>
+    <div className={`rounded-2xl border transition-all ${hasResult ? (passed ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5') : 'border-gray-700/50 bg-gray-800/20'}`}>
       {/* Header */}
       <div className="flex items-start justify-between px-5 pt-4 pb-2">
         <div>
           <h3 className="text-base font-medium text-gray-100">{scenario.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">{scenario.date} × {scenario.shift} × {scenario.slots} slot(s)</p>
+          <p className="text-xs text-gray-500 mt-0.5">{scenario.stations}</p>
         </div>
         <button
           onClick={() => onRun(scenario.id)}
@@ -287,50 +238,85 @@ function TestCard({
 
       {/* Scenario description */}
       <div className="px-5 py-2 border-t border-b border-gray-700/30">
-        <p className="text-xs text-gray-400 leading-relaxed">{scenario.shouldHappen}</p>
+        <p className="text-xs text-gray-400 leading-relaxed">{scenario.description}</p>
+        <p className="text-xs text-blue-400/70 mt-1">Expected: {scenario.expectedResult}</p>
       </div>
 
       {/* Results area */}
-      {result && (
+      {hasResult && result && (
         <>
           {/* Verdict bar */}
           <div className="flex items-center gap-4 px-5 py-3 border-b border-gray-700/30">
-            <span className={`text-2xl ${result.passed ? 'text-green-400' : 'text-red-400'}`}>
-              {result.passed ? '✅' : '❌'}
+            <span className={`text-2xl ${passed ? 'text-green-400' : 'text-red-400'}`}>
+              {passed ? '✅' : '❌'}
             </span>
             <div className="flex-1">
-              {result.passed ? (
-                <p className="text-sm text-green-400 font-medium">Test passed</p>
+              {kr ? (
+                kr.passed ? (
+                  <p className="text-sm text-green-400 font-medium">Known result matched — all {kr.expected.length} positions correct</p>
+                ) : (
+                  <div>
+                    <p className="text-sm text-red-400 font-medium">Known result mismatch</p>
+                    {kr.mismatches.map((m, i) => (
+                      <p key={i} className="text-xs text-red-300 mt-0.5">
+                        Position {m.position}: expected &quot;{m.expected}&quot; → got &quot;{m.actual}&quot;
+                      </p>
+                    ))}
+                  </div>
+                )
               ) : (
-                <p className="text-sm text-red-400 font-medium">
-                  Expected watcher: {result.expectedWatcher ?? 'null'} → got: {result.actualWatcher ?? 'null'} ({result.assignmentsCount} assignments)
+                <p className={`text-sm font-medium ${allFilled ? 'text-green-400' : 'text-amber-400'}`}>
+                  {result.totalAssigned}/{result.totalSlots} slots filled
+                  {!allFilled && ` (${result.totalSlots - result.totalAssigned} unfilled)`}
                 </p>
               )}
             </div>
-            {result.assignmentsCount > 0 && (
-              <span className="text-xs text-gray-400">
-                {result.assignmentsCount}/{result.expectedSlots} filled
-              </span>
-            )}
+            <span className="text-xs text-gray-400">
+              {result.totalAssigned}/{result.totalSlots} filled
+            </span>
           </div>
 
-          {/* Assigned firefighters */}
-          {result.assigned.length > 0 && (
-            <div className="px-5 py-3 border-b border-gray-700/30">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Assigned</h4>
-              <div className="flex flex-wrap gap-2">
-                {result.assigned.map((ff: AssignedFF, i: number) => (
-                  <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/50">
-                    <WatchBadge watch={ff.watch} />
-                    <span className="text-sm text-gray-200">{ff.name}</span>
-                    <span className="text-[10px] text-gray-500">{ff.rank}</span>
-                    <ThresholdBadge threshold={ff.threshold} />
-                    {ff.distance !== undefined && <span className="text-[10px] text-gray-500">{ff.distance}km</span>}
+          {/* Station Results */}
+          <div className="px-5 py-3 border-b border-gray-700/30">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Station Assignments</h4>
+            <div className="space-y-3">
+              {result.stationResults.map((sr, si) => (
+                <div key={si} className="bg-gray-800/40 rounded-lg border border-gray-700/40 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2 bg-gray-800/60">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-200">{sr.stationName}</span>
+                      {sr.specialist && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                          {sr.specialist}
+                        </span>
+                      )}
+                    </div>
+                    <span className={`text-xs font-mono ${sr.assignedFirefighters.length === sr.slots ? 'text-green-400' : 'text-amber-400'}`}>
+                      {sr.assignedFirefighters.length}/{sr.slots}
+                    </span>
                   </div>
-                ))}
-              </div>
+                  {sr.assignedFirefighters.length > 0 && (
+                    <div className="px-4 py-2 space-y-1.5">
+                      {sr.assignedFirefighters.map((af, fi) => (
+                        <div key={fi} className="flex items-center gap-2 flex-wrap">
+                          <WatchBadge watch={af.watch} />
+                          <span className="text-sm text-gray-200 font-medium">{af.name}</span>
+                          <span className="text-[10px] text-gray-500">{af.rank}</span>
+                          <PhaseBadge phase={af.cascadePhase} />
+                          <ThresholdBadge threshold={af.threshold} />
+                          <span className="text-[10px] text-gray-500 font-mono">{af.distance}km</span>
+                          <span className="text-[10px] text-gray-600">from {af.homeStation}</span>
+                          {af.stolenFrom && (
+                            <span className="text-[10px] text-purple-400">(stolen from {af.stolenFrom})</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
+          </div>
 
           {/* Watch Eligibility Matrix */}
           <div className="px-5 py-3 border-b border-gray-700/30">
@@ -341,50 +327,132 @@ function TestCard({
                   <tr className="border-b border-gray-700/50 bg-gray-800/70">
                     <th className="text-left py-2 px-3 text-gray-400 font-medium text-xs">Watch</th>
                     <th className="text-left py-2 px-3 text-gray-400 font-medium text-xs">Shift</th>
+                    <th className="text-left py-2 px-3 text-gray-400 font-medium text-xs">Status</th>
                     <th className="text-center py-2 px-3 text-gray-400 font-medium text-xs w-16">Eligible</th>
                     <th className="text-left py-2 px-3 text-gray-400 font-medium text-xs">Reason</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {WATCH_NAMES.map((watchName, i) => {
-                    const entry = result.watchMatrix[i];
+                  {result.watchMatrix.map((entry, i) => (
+                    <tr key={i} className={i < 3 ? 'border-b border-gray-800/30' : ''}>
+                      <td className="py-2 px-3"><WatchBadge watch={entry.watch} /></td>
+                      <td className="py-2 px-3 font-mono text-xs text-gray-300">{entry.shift}</td>
+                      <td className="py-2 px-3 text-xs text-gray-400">{entry.statusLabel}</td>
+                      <td className="py-2 px-3 text-center text-lg">
+                        {entry.eligible ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}
+                      </td>
+                      <td className={`py-2 px-3 text-xs ${entry.eligible ? 'text-green-400/50' : 'text-gray-400'}`}>
+                        {entry.reason}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Phase Distribution */}
+          <div className="px-5 py-3 border-b border-gray-700/30">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Assignment Distribution</h4>
+            <div className="flex flex-wrap gap-3">
+              {(() => {
+                const byWatch: Record<string, number> = {};
+                const byPhase: Record<string, number> = {};
+                for (const ff of result.allFirefightersDetail) {
+                  if (ff.isAssigned) {
+                    byWatch[ff.watch] = (byWatch[ff.watch] || 0) + 1;
+                    byPhase[ff.cascadePhase] = (byPhase[ff.cascadePhase] || 0) + 1;
+                  }
+                }
+                return (
+                  <>
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/50">
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">By Watch:</span>
+                      {Object.entries(byWatch).map(([w, c]) => (
+                        <span key={w} className="flex items-center gap-1">
+                          <WatchBadge watch={w} />
+                          <span className="text-xs text-gray-300 font-mono">{c}</span>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/50">
+                      <span className="text-[10px] text-gray-500 uppercase tracking-wider">By Phase:</span>
+                      {Object.entries(byPhase).map(([p, c]) => (
+                        <span key={p} className="flex items-center gap-1">
+                          <PhaseBadge phase={p} />
+                          <span className="text-xs text-gray-300 font-mono">{c}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Trace logs (collapsible) */}
+          {result.stationResults.some(sr => sr.traceLogs && sr.traceLogs.length > 0) && (
+            <details className="px-5 py-3 border-b border-gray-700/30">
+              <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-400 select-none">
+                🔬 Allocation Trace Logs
+              </summary>
+              <div className="mt-3 space-y-3">
+                {result.stationResults.map((sr, si) => (
+                  sr.traceLogs && sr.traceLogs.length > 0 && (
+                    <div key={si}>
+                      <h5 className="text-xs font-medium text-gray-400 mb-1">{sr.stationName}</h5>
+                      <TraceLogRenderer traceLogs={sr.traceLogs} />
+                    </div>
+                  )
+                ))}
+              </div>
+            </details>
+          )}
+
+          {/* All Firefighters (collapsible) */}
+          <details className="px-5 py-3">
+            <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-400 select-none">
+              📋 All Firefighters ({result.allFirefightersDetail.length})
+            </summary>
+            <div className="mt-2 bg-gray-800/50 rounded-lg overflow-x-auto border border-gray-700/50">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-700/50 bg-gray-800/70">
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Status</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Name</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Watch</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Rank</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Home Station</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">OT Station</th>
+                    <th className="text-center py-2 px-2 text-gray-400 font-medium">Dist</th>
+                    <th className="text-center py-2 px-2 text-gray-400 font-medium">OT Count</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Phase</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Threshold</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.allFirefightersDetail.map((ff, i) => {
+                    const status = ff.isAssigned ? '🟢' : ff.isEligible ? '🟡' : '⏸️';
+                    const rowBg = ff.isAssigned ? 'bg-green-900/20' : ff.isEligible ? 'bg-yellow-900/10' : '';
                     return (
-                      <tr key={watchName} className={i < 3 ? 'border-b border-gray-800/30' : ''}>
-                        <td className="py-2 px-3"><WatchBadge watch={watchName} /></td>
-                        <td className="py-2 px-3 font-mono text-xs text-gray-300">{entry.shift}</td>
-                        <td className="py-2 px-3 text-center text-lg">
-                          {entry.eligible ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}
-                        </td>
-                        <td className={`py-2 px-3 text-xs ${entry.eligible ? 'text-green-400/50' : 'text-gray-400'}`}>
-                          {entry.eligible ? '✓ Eligible' : entry.reason}
-                        </td>
+                      <tr key={i} className={`border-b border-gray-800/30 ${rowBg}`}>
+                        <td className="py-1.5 px-2 text-center text-sm">{status}</td>
+                        <td className="py-1.5 px-2 text-gray-200 font-medium">{ff.name}</td>
+                        <td className="py-1.5 px-2"><WatchBadge watch={ff.watch} /></td>
+                        <td className="py-1.5 px-2 text-gray-400">{ff.rank}</td>
+                        <td className="py-1.5 px-2 text-gray-400">{ff.homeStation}</td>
+                        <td className="py-1.5 px-2 text-gray-300">{ff.otStation}</td>
+                        <td className="py-1.5 px-2 font-mono text-center text-gray-400">{ff.distance > 0 ? ff.distance + 'km' : '—'}</td>
+                        <td className="py-1.5 px-2 font-mono text-center text-gray-400">{ff.otDays}D/{ff.otNights}N</td>
+                        <td className="py-1.5 px-2">{ff.cascadePhase !== 'unassigned' && ff.cascadePhase !== 'locked_out' ? <PhaseBadge phase={ff.cascadePhase} /> : <span className="text-gray-600 text-[10px]">{ff.cascadePhase}</span>}</td>
+                        <td className="py-1.5 px-2">{ff.threshold !== '—' ? <ThresholdBadge threshold={ff.threshold} /> : <span className="text-gray-600">—</span>}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-          </div>
-
-          {/* Debug trace (collapsible) */}
-          {result.debugTrace && (
-            <details className="px-5 py-3 border-b border-gray-700/30">
-              <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-400 select-none">
-                🔬 Step-by-step allocation debug trace
-              </summary>
-              <TraceRenderer trace={result.debugTrace} />
-            </details>
-          )}
-
-          {/* Errors */}
-          {result.errors.length > 0 && (
-            <div className="px-5 py-3">
-              <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-2">Errors</h4>
-              <pre className="text-xs text-red-300 bg-red-500/5 rounded-lg p-3 overflow-x-auto">
-                {result.errors.join('\n')}
-              </pre>
-            </div>
-          )}
+          </details>
         </>
       )}
     </div>
@@ -394,69 +462,53 @@ function TestCard({
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function TestPage() {
-  const [results, setResults] = useState<Record<string, TestResult>>({});
-  const [running, setRunning] = useState(false);
-  const [passCount, setPassCount] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
-  const [timestamp, setTimestamp] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, TestAPIResponse>>({});
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [runningAll, setRunningAll] = useState(false);
 
   async function runScenario(scenarioId: string) {
-    setRunning(true);
+    const scenario = SCENARIOS.find(s => s.id === scenarioId);
+    if (!scenario) return;
+
+    setRunningId(scenarioId);
     try {
-      setResults((r) => ({ ...r, [scenarioId]: undefined as any }));
+      // Reset OT counts first
+      await fetch('/api/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset_ot_counts' }),
+      });
+
+      // Run scenario
       const res = await fetch('/api/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenarioId }),
+        body: JSON.stringify({ scenario: scenario.apiKey }),
       });
-      const data = await res.json();
-      if (Array.isArray(data.results)) {
-        const result = data.results[0];
-        if (result) {
-          setResults((prev) => {
-            const updated = { ...prev, [scenarioId]: result };
-            return updated;
-          });
-          // Update totals
-          const allVals = Object.values({ ...results, [scenarioId]: result });
-          setPassCount(allVals.filter((r) => r && r.passed).length);
-          setTotalCount(allVals.filter(Boolean).length);
-        }
+      const data: TestAPIResponse = await res.json();
+
+      if (!data.error) {
+        setResults(prev => ({ ...prev, [scenarioId]: data }));
       }
     } catch (e) {
       console.error('Failed to run scenario:', e);
     }
-    setRunning(false);
+    setRunningId(null);
   }
 
   async function runAll() {
-    setRunning(true);
-    try {
-      const res = await fetch('/api/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-
-      if (data.passCount !== undefined && data.total !== undefined) {
-        setPassCount(data.passCount);
-        setTotalCount(data.total);
-        setTimestamp(data.timestamp);
-      }
-
-      if (Array.isArray(data.results)) {
-        const newResults: Record<string, TestResult> = {};
-        for (const result of data.results) {
-          newResults[result.id] = result;
-        }
-        setResults(newResults);
-      }
-    } catch (e) {
-      console.error('Failed to run all scenarios:', e);
+    setRunningAll(true);
+    for (const scenario of SCENARIOS) {
+      await runScenario(scenario.id);
     }
-    setRunning(false);
+    setRunningAll(false);
   }
+
+  const completedCount = Object.keys(results).length;
+  const passedCount = Object.values(results).filter(r => {
+    if (r.knownResultCheck) return r.knownResultCheck.passed;
+    return r.totalAssigned === r.totalSlots;
+  }).length;
 
   return (
     <div className="min-h-screen bg-[#0a0f1a] text-gray-200">
@@ -468,25 +520,20 @@ export default function TestPage() {
             <p className="text-sm text-gray-400 mt-1">Allocation engine regression tests</p>
           </div>
           <div className="flex items-center gap-3">
-            {timestamp && (
-              <span className="text-xs text-gray-500">
-                Last run: {new Date(timestamp).toLocaleTimeString('en-NZ', {
-                  timeZone: 'Pacific/Auckland',
-                })}
-              </span>
-            )}
-            {(passCount > 0 || totalCount > 0) && (
+            {completedCount > 0 && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/50">
-                <span className="text-sm text-green-400">{passCount}/{totalCount}</span>
+                <span className={`text-sm ${passedCount === completedCount ? 'text-green-400' : 'text-amber-400'}`}>
+                  {passedCount}/{completedCount}
+                </span>
                 <span className="text-xs text-gray-500">passed</span>
               </div>
             )}
             <button
               onClick={runAll}
-              disabled={running}
+              disabled={runningAll || runningId !== null}
               className="flex items-center gap-2 px-6 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 font-medium text-white text-sm transition-all"
             >
-              {running ? '⏳ Running...' : '▶ Run all tests'}
+              {runningAll ? '⏳ Running...' : '▶ Run all tests'}
             </button>
           </div>
         </div>
@@ -499,7 +546,7 @@ export default function TestPage() {
               scenario={scenario}
               result={results[scenario.id]}
               onRun={runScenario}
-              running={running}
+              running={runningId === scenario.id || runningAll}
             />
           ))}
         </div>
