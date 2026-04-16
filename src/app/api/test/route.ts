@@ -44,27 +44,25 @@ const KNOWN_RESULT_SIMPLE = {
     { stationName: 'Albany', slots: 2, specialist: null },
   ],
   expectedAssignments: [
-    { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'might', reason: 'Blue CB FF, Albany→Albany 0km' },
-    { name: 'Tipene Rata', watch: 'Blue', threshold: 'might', reason: 'Blue CB FF, Devonport→Albany 14km (closer than Kate 21km)' },
+    { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'must', reason: 'Blue CB FF, Albany→Albany 0km, cbD=1 (tied lowest)' },
+    { name: 'Marama Te Awa', watch: 'Blue', threshold: 'must', reason: 'Blue CB FF, Henderson→Albany 19km, cbD=1 (tied lowest, nearest after Zoe)' },
   ],
 };
 
 // Complex known-result: 3 stations, specialist requirement, cross-phase allocation
 // Tests: callback district restriction, specialist qualification filtering,
-//        cross-station assignedIds tracking, non-callback fallback
+//        cross-station assignedIds tracking
 //
-// Distances (updated 2026-04-17 from OSRM + Adam's verified data):
-//   Albany→Albany=0, Devonport→Albany=14, Silverdale→Albany=21
-//   Silverdale→Silverdale=0, Devonport→Silverdale=30
-//   Henderson→Takapuna=24, Devonport→Takapuna=15
+// Seed OT data (Blue Waitemata FF-rank, cbD values):
+//   Zoe Fletcher     (FF,  Albany,     cbD=1, prt)
+//   Marama Te Awa    (QFF, Henderson,  cbD=1, prt)
+//   Kate Sullivan    (SFF, Silverdale, cbD=2, prt+type4)
+//   Tipene Rata      (QFF, Devonport,  cbD=3)
 //
-// Station processing order (sequential, shared assignedIds):
-//   1. Albany (2 slots, no spec) → Blue CB FF pool: Zoe(0km), Tipene(14km), Kate(21km)
-//      All OT=0 → sort by dist → Zoe + Tipene assigned
-//   2. Silverdale (1 slot, prt) → Remaining Blue CB FFs with prt: Kate(Silverdale→Silverdale=0km, prt✅)
-//      Kate assigned
-//   3. Takapuna (1 slot, no spec) → Remaining Blue CB FFs: Marama Te Awa(Henderson→Takapuna=24km)
-//      Only remaining Waitemata Blue FF-rank → Marama assigned
+// Station processing order:
+//   1. Albany (2 slots, no spec) → cbD sort: Zoe(1,0km)+Marama(1,19km) [tied, distance breaks]
+//   2. Silverdale (1 slot, prt)  → remaining with prt: Kate(Silverdale→0km, cbD=2)
+//   3. Takapuna (1 slot, no spec)→ remaining: Tipene(Devonport→15km, cbD=3)
 const KNOWN_RESULT_COMPLEX = {
   id: 'known-result-complex',
   name: 'Known Result — 3 Stations + Specialist',
@@ -76,13 +74,10 @@ const KNOWN_RESULT_COMPLEX = {
     { stationName: 'Takapuna', slots: 1, specialist: null },
   ],
   expectedAssignments: [
-    // Albany: 2 closest Blue CB FF in Waitemata
-    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Albany→Albany 0km' },
-    { name: 'Tipene Rata', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Devonport→Albany 14km' },
-    // Silverdale: prt required, Kate Sullivan (SFF, Silverdale, prt✅, 0km)
-    { name: 'Kate Sullivan', station: 'Silverdale', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Silverdale→Silverdale 0km, has prt' },
-    // Takapuna: remaining Blue CB FF — Marama Te Awa (QFF, Henderson, 24km)
-    { name: 'Marama Te Awa', station: 'Takapuna', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Henderson→Takapuna 24km' },
+    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Albany→Albany 0km, cbD=1' },
+    { name: 'Marama Te Awa', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Henderson→Albany 19km, cbD=1' },
+    { name: 'Kate Sullivan', station: 'Silverdale', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Silverdale→Silverdale 0km, cbD=2, has prt' },
+    { name: 'Tipene Rata', station: 'Takapuna', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Devonport→Takapuna 15km, cbD=3' },
   ],
 };
 
@@ -415,8 +410,10 @@ export async function POST(request: NextRequest) {
         distance: dist,
         otDays: ff.ot_count_days,
         otNights: ff.ot_count_nights,
-        ncOtDays: ff.ot_count_noncallback_days,
-        ncOtNights: ff.ot_count_noncallback_nights,
+        cbDays: ff.ot_count_callback_days ?? 0,
+        cbNights: ff.ot_count_callback_nights ?? 0,
+        ncDays: ff.ot_count_noncallback_days ?? 0,
+        ncNights: ff.ot_count_noncallback_nights ?? 0,
         isAssigned,
         isEligible: eligible,
         cascadePhase,

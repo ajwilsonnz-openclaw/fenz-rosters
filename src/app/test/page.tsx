@@ -48,6 +48,10 @@ interface FFDetail {
   distance: number;
   otDays: number;
   otNights: number;
+  cbDays: number;
+  cbNights: number;
+  ncDays: number;
+  ncNights: number;
   isAssigned: boolean;
   isEligible: boolean;
   cascadePhase: string;
@@ -103,16 +107,16 @@ const SCENARIOS: ScenarioDef[] = [
     id: 'known-result-simple',
     apiKey: 'known-result-simple',
     name: 'Known Result — Albany 2-slot',
-    description: 'Simple 1-station test. Albany needs 2 FFs, no specialist. Only Blue Waitemata callback FFs eligible. With all OT counts at 0, the 2 closest FFs should be assigned.',
-    expectedResult: 'Zoe Fletcher (Albany→Albany, 0km) + Kate Sullivan (Silverdale→Albany, 4km)',
+    description: 'Simple 1-station test. Albany needs 2 FFs, no specialist. Blue Waitemata callback FFs sorted by callback day OT count (cbD), then distance. Uses real seed OT data (0–10 range).',
+    expectedResult: 'Zoe Fletcher (cbD=1, 0km) + Marama Te Awa (cbD=1, 19km) — tied lowest cbD, distance breaks tie',
     stations: 'Albany(2)',
   },
   {
     id: 'known-result-complex',
     apiKey: 'known-result-complex',
     name: 'Known Result — 3 Stations + Specialist',
-    description: 'Multi-station test with specialist qualification requirement. Albany needs 2 (no spec), Silverdale needs 1 with PRT qualification, Takapuna needs 1 (no spec). Tests callback exhaustion, specialist filtering, cross-station tracking, and phase fallback.',
-    expectedResult: 'Albany: Zoe+Kate (Blue CB). Silverdale: Emma Chen (Green NC, has PRT). Takapuna: Rongo Parata (Blue CB, home station).',
+    description: 'Multi-station test with specialist PRT requirement. Tests cbD-based sorting, specialist filtering, cross-station assignedIds tracking. All 4 slots filled via Phase 1 (ff-callback) alone.',
+    expectedResult: 'Albany: Zoe(cbD=1)+Marama(cbD=1). Silverdale(prt): Kate(cbD=2). Takapuna: Tipene(cbD=3).',
     stations: 'Albany(2), Silverdale(1,prt), Takapuna(1)',
   },
 ];
@@ -412,8 +416,8 @@ function TestCard({
             </details>
           )}
 
-          {/* All Firefighters (collapsible) */}
-          <details className="px-5 py-3">
+          {/* All Firefighters (expanded, open by default) */}
+          <details open className="px-5 py-3">
             <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-400 select-none">
               📋 All Firefighters ({result.allFirefightersDetail.length})
             </summary>
@@ -428,7 +432,9 @@ function TestCard({
                     <th className="text-left py-2 px-2 text-gray-400 font-medium">Home Station</th>
                     <th className="text-left py-2 px-2 text-gray-400 font-medium">OT Station</th>
                     <th className="text-center py-2 px-2 text-gray-400 font-medium">Dist</th>
-                    <th className="text-center py-2 px-2 text-gray-400 font-medium">OT Count</th>
+                    <th className="text-center py-2 px-2 text-gray-400 font-medium" title="Callback Days / Callback Nights">CB OT</th>
+                    <th className="text-center py-2 px-2 text-gray-400 font-medium" title="Non-callback Days / Non-callback Nights">NC OT</th>
+                    <th className="text-left py-2 px-2 text-gray-400 font-medium">Quals</th>
                     <th className="text-left py-2 px-2 text-gray-400 font-medium">Phase</th>
                     <th className="text-left py-2 px-2 text-gray-400 font-medium">Threshold</th>
                   </tr>
@@ -437,16 +443,19 @@ function TestCard({
                   {result.allFirefightersDetail.map((ff, i) => {
                     const status = ff.isAssigned ? '🟢' : ff.isEligible ? '🟡' : '⏸️';
                     const rowBg = ff.isAssigned ? 'bg-green-900/20' : ff.isEligible ? 'bg-yellow-900/10' : '';
+                    const qualStr = (ff.quals || []).filter(q => q !== 'driver' && q !== 'not_rookie').join(', ');
                     return (
                       <tr key={i} className={`border-b border-gray-800/30 ${rowBg}`}>
                         <td className="py-1.5 px-2 text-center text-sm">{status}</td>
-                        <td className="py-1.5 px-2 text-gray-200 font-medium">{ff.name}</td>
+                        <td className="py-1.5 px-2 text-gray-200 font-medium whitespace-nowrap">{ff.name}</td>
                         <td className="py-1.5 px-2"><WatchBadge watch={ff.watch} /></td>
                         <td className="py-1.5 px-2 text-gray-400">{ff.rank}</td>
-                        <td className="py-1.5 px-2 text-gray-400">{ff.homeStation}</td>
-                        <td className="py-1.5 px-2 text-gray-300">{ff.otStation}</td>
+                        <td className="py-1.5 px-2 text-gray-400 whitespace-nowrap">{ff.homeStation}</td>
+                        <td className="py-1.5 px-2 text-gray-300 whitespace-nowrap">{ff.otStation}</td>
                         <td className="py-1.5 px-2 font-mono text-center text-gray-400">{ff.distance > 0 ? ff.distance + 'km' : '—'}</td>
-                        <td className="py-1.5 px-2 font-mono text-center text-gray-400">{ff.otDays}D/{ff.otNights}N</td>
+                        <td className="py-1.5 px-2 font-mono text-center text-blue-400">{ff.cbDays ?? 0}D/{ff.cbNights ?? 0}N</td>
+                        <td className="py-1.5 px-2 font-mono text-center text-amber-400">{ff.ncDays ?? 0}D/{ff.ncNights ?? 0}N</td>
+                        <td className="py-1.5 px-2 text-gray-400 whitespace-nowrap">{qualStr || '—'}</td>
                         <td className="py-1.5 px-2">{ff.cascadePhase !== 'unassigned' && ff.cascadePhase !== 'locked_out' ? <PhaseBadge phase={ff.cascadePhase} /> : <span className="text-gray-600 text-[10px]">{ff.cascadePhase}</span>}</td>
                         <td className="py-1.5 px-2">{ff.threshold !== '—' ? <ThresholdBadge threshold={ff.threshold} /> : <span className="text-gray-600">—</span>}</td>
                       </tr>
@@ -475,14 +484,7 @@ export default function TestPage() {
 
     setRunningId(scenarioId);
     try {
-      // Reset OT counts first
-      await fetch('/api/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reset_ot_counts' }),
-      });
-
-      // Run scenario
+      // Run scenario (uses seed OT data — no reset)
       const res = await fetch('/api/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

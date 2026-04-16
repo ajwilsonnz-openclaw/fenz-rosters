@@ -131,80 +131,85 @@ export async function seedDatabase() {
   console.log('  ✅ Watch anchors created');
 
   // --- 6. Firefighters (12 per watch, 48 total) ---
+  // 4 OT counters: cbD=callback days, cbN=callback nights, ncD=noncallback days, ncN=noncallback nights
   const firefighters = [
     // ═══ GREEN WATCH (12) ═══
     // Waitemata (5)
-    { first: 'Wiremu', last: 'Hemara', watch: 'Green', station: 'Albany', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 5, otNights: 2 },
-    { first: 'Sarah', last: 'Mitchell', watch: 'Green', station: 'Devonport', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 3, otNights: 1 },
-    { first: 'Tane', last: 'Rawiri', watch: 'Green', station: 'East Coast Bays', rank: 'SFF', quals: { driver: true, not_rookie: true }, otDays: 8, otNights: 4 },
-    { first: 'Emma', last: 'Chen', watch: 'Green', station: 'Albany', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 2, otNights: 1 },
-    { first: 'Jordan', last: 'Park', watch: 'Green', station: 'Silverdale', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 1, otNights: 0 },
+    { first: 'Wiremu', last: 'Hemara', watch: 'Green', station: 'Albany', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 3, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Sarah', last: 'Mitchell', watch: 'Green', station: 'Devonport', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 1, cbN: 0, ncD: 2, ncN: 1 },
+    { first: 'Tane', last: 'Rawiri', watch: 'Green', station: 'East Coast Bays', rank: 'SFF', quals: { driver: true, not_rookie: true }, cbD: 5, cbN: 3, ncD: 3, ncN: 1 },
+    { first: 'Emma', last: 'Chen', watch: 'Green', station: 'Albany', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Jordan', last: 'Park', watch: 'Green', station: 'Silverdale', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
     // Auckland (4)
-    { first: 'Nina', last: 'Kowalski', watch: 'Green', station: 'Henderson', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 4, otNights: 2 },
-    { first: 'Rangi', last: 'Tuhoe', watch: 'Green', station: 'Grey Lynn', rank: 'QFF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
-    { first: 'David', last: 'Wu', watch: 'Green', station: 'Grey Lynn', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, otDays: 3, otNights: 1 },
-    { first: 'Lisa', last: 'Campbell', watch: 'Green', station: 'Te Atatu', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, otDays: 1, otNights: 0 },
+    { first: 'Nina', last: 'Kowalski', watch: 'Green', station: 'Henderson', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 2, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Rangi', last: 'Tuhoe', watch: 'Green', station: 'Grey Lynn', rank: 'QFF', quals: { driver: true, not_rookie: true }, cbD: 4, cbN: 2, ncD: 2, ncN: 1 },
+    { first: 'David', last: 'Wu', watch: 'Green', station: 'Grey Lynn', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, cbD: 1, cbN: 1, ncD: 2, ncN: 0 },
+    { first: 'Lisa', last: 'Campbell', watch: 'Green', station: 'Te Atatu', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
     // Counties Manukau (3)
-    { first: 'Ben', last: 'Tafua', watch: 'Green', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 7, otNights: 3 },
-    { first: 'Jade', last: 'Renata', watch: 'Green', station: 'Mangere', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 2, otNights: 1 },
-    { first: 'Sam', last: 'Kapoor', watch: 'Green', station: 'Otara', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 5, otNights: 2 },
+    { first: 'Ben', last: 'Tafua', watch: 'Green', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 4, cbN: 2, ncD: 3, ncN: 1 },
+    { first: 'Jade', last: 'Renata', watch: 'Green', station: 'Mangere', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Sam', last: 'Kapoor', watch: 'Green', station: 'Otara', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, cbD: 3, cbN: 1, ncD: 2, ncN: 1 },
 
     // ═══ RED WATCH (12) ═══
     // Auckland (5)
-    { first: 'Liam', last: 'OBrien', watch: 'Red', station: 'Auckland City', rank: 'FF', quals: { driver: true, not_rookie: true, CBR: true }, otDays: 4, otNights: 2 },
-    { first: 'Aroha', last: 'Te Rangi', watch: 'Red', station: 'Grey Lynn', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 6, otNights: 3 },
-    { first: 'Marcus', last: 'Williams', watch: 'Red', station: 'Grey Lynn', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 2, otNights: 1 },
-    { first: 'Hemi', last: 'Ngata', watch: 'Red', station: 'St Heliers', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, otDays: 7, otNights: 3 },
-    { first: 'Priya', last: 'Sharma', watch: 'Red', station: 'Auckland City', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true, CBR: true }, otDays: 1, otNights: 0 },
+    { first: 'Liam', last: 'OBrien', watch: 'Red', station: 'Auckland City', rank: 'FF', quals: { driver: true, not_rookie: true, CBR: true }, cbD: 2, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Aroha', last: 'Te Rangi', watch: 'Red', station: 'Grey Lynn', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 4, cbN: 2, ncD: 2, ncN: 1 },
+    { first: 'Marcus', last: 'Williams', watch: 'Red', station: 'Grey Lynn', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Hemi', last: 'Ngata', watch: 'Red', station: 'St Heliers', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, cbD: 5, cbN: 2, ncD: 2, ncN: 1 },
+    { first: 'Priya', last: 'Sharma', watch: 'Red', station: 'Auckland City', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true, CBR: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
     // Waitemata (4)
-    { first: 'Jake', last: 'Morrison', watch: 'Red', station: 'Takapuna', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 3, otNights: 1 },
-    { first: 'Maia', last: 'Henare', watch: 'Red', station: 'Birkenhead', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 5, otNights: 2 },
-    { first: 'Chris', last: 'Evans', watch: 'Red', station: 'Albany', rank: 'SFF', quals: { driver: true, not_rookie: true }, otDays: 8, otNights: 4 },
-    { first: 'Mereana', last: 'Kahu', watch: 'Red', station: 'Silverdale', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 2, otNights: 0 },
+    { first: 'Jake', last: 'Morrison', watch: 'Red', station: 'Takapuna', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 2, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Maia', last: 'Henare', watch: 'Red', station: 'Birkenhead', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 3, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Chris', last: 'Evans', watch: 'Red', station: 'Albany', rank: 'SFF', quals: { driver: true, not_rookie: true }, cbD: 6, cbN: 3, ncD: 2, ncN: 1 },
+    { first: 'Mereana', last: 'Kahu', watch: 'Red', station: 'Silverdale', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 0 },
     // Counties Manukau (3)
-    { first: 'Tyler', last: 'Patel', watch: 'Red', station: 'Manurewa', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 4, otNights: 2 },
-    { first: 'Anika', last: 'Singh', watch: 'Red', station: 'Papakura', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 3, otNights: 1 },
-    { first: 'Rawiri', last: 'Tamati', watch: 'Red', station: 'Howick', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 1, otNights: 0 },
+    { first: 'Tyler', last: 'Patel', watch: 'Red', station: 'Manurewa', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 2, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Anika', last: 'Singh', watch: 'Red', station: 'Papakura', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 2, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Rawiri', last: 'Tamati', watch: 'Red', station: 'Howick', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
 
     // ═══ BROWN WATCH (12) ═══
+    // Waitemata (4) — changed Henderson/Glen Eden/Te Atatu to Waitemata FFs
+    { first: 'Kahu', last: 'Makiha', watch: 'Brown', station: 'Henderson', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 2, cbN: 1, ncD: 1, ncN: 1 },
+    { first: 'Rebecca', last: 'Taylor', watch: 'Brown', station: 'Glen Eden', rank: 'QFF', quals: { driver: true, not_rookie: true }, cbD: 3, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Luke', last: 'Tanner', watch: 'Brown', station: 'Devonport', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 2, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Hinewai', last: 'Ruru', watch: 'Brown', station: 'Takapuna', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 4, cbN: 2, ncD: 2, ncN: 1 },
     // Auckland (5)
-    { first: 'Kahu', last: 'Makiha', watch: 'Brown', station: 'Henderson', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 3, otNights: 2 },
-    { first: 'Rebecca', last: 'Taylor', watch: 'Brown', station: 'Glen Eden', rank: 'QFF', quals: { driver: true, not_rookie: true }, otDays: 5, otNights: 2 },
-    { first: 'Dan', last: 'Reid', watch: 'Brown', station: 'Avondale', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 2, otNights: 1 },
-    { first: 'Nikau', last: 'Tangaroa', watch: 'Brown', station: 'Grey Lynn', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, otDays: 9, otNights: 5 },
-    { first: 'Grace', last: 'Whittaker', watch: 'Brown', station: 'Te Atatu', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, otDays: 0, otNights: 0 },
-    // Waitemata (4)
-    { first: 'Luke', last: 'Tanner', watch: 'Brown', station: 'Devonport', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 4, otNights: 2 },
-    { first: 'Hinewai', last: 'Ruru', watch: 'Brown', station: 'Takapuna', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 6, otNights: 3 },
-    { first: 'Pete', last: 'Douglas', watch: 'Brown', station: 'East Coast Bays', rank: 'SFF', quals: { driver: true, not_rookie: true }, otDays: 3, otNights: 1 },
-    { first: 'Whina', last: 'Cooper', watch: 'Brown', station: 'Silverdale', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 1, otNights: 0 },
+    { first: 'Dan', last: 'Reid', watch: 'Brown', station: 'Avondale', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Nikau', last: 'Tangaroa', watch: 'Brown', station: 'Grey Lynn', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, cbD: 7, cbN: 4, ncD: 2, ncN: 1 },
+    { first: 'Grace', last: 'Whittaker', watch: 'Brown', station: 'Balmoral', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, cbD: 0, cbN: 0, ncD: 0, ncN: 0 },
+    { first: 'Pete', last: 'Douglas', watch: 'Brown', station: 'Ellerslie', rank: 'SFF', quals: { driver: true, not_rookie: true }, cbD: 2, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Whina', last: 'Cooper', watch: 'Brown', station: 'Silverdale', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
     // Counties Manukau (3)
-    { first: 'Matt', last: 'Young', watch: 'Brown', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 7, otNights: 3 },
-    { first: 'Aria', last: 'Matene', watch: 'Brown', station: 'Mangere', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 2, otNights: 1 },
-    { first: 'Ross', last: 'McIntyre', watch: 'Brown', station: 'Manurewa', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 5, otNights: 2 },
+    { first: 'Matt', last: 'Young', watch: 'Brown', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 5, cbN: 2, ncD: 2, ncN: 1 },
+    { first: 'Aria', last: 'Matene', watch: 'Brown', station: 'Mangere', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Ross', last: 'McIntyre', watch: 'Brown', station: 'Manurewa', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, cbD: 3, cbN: 1, ncD: 2, ncN: 1 },
 
     // ═══ BLUE WATCH (12) ═══
     // Counties Manukau (5)
-    { first: 'Tommy', last: 'Ahu', watch: 'Blue', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
-    { first: 'Fiona', last: 'Cameron', watch: 'Blue', station: 'Howick', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 4, otNights: 2 },
-    { first: 'Sam', last: 'Tong', watch: 'Blue', station: 'Manurewa', rank: 'SFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 7, otNights: 4 },
-    { first: 'Mere', last: 'Whare', watch: 'Blue', station: 'Mangere', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 1, otNights: 0 },
-    { first: 'Alex', last: 'Brown', watch: 'Blue', station: 'Otara', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 3, otNights: 1 },
+    { first: 'Tommy', last: 'Ahu', watch: 'Blue', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 4, cbN: 2, ncD: 2, ncN: 1 },
+    { first: 'Fiona', last: 'Cameron', watch: 'Blue', station: 'Howick', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 2, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Sam', last: 'Tong', watch: 'Blue', station: 'Manurewa', rank: 'SFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 5, cbN: 3, ncD: 2, ncN: 1 },
+    { first: 'Mere', last: 'Whare', watch: 'Blue', station: 'Mangere', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
+    { first: 'Alex', last: 'Brown', watch: 'Blue', station: 'Otara', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, cbD: 2, cbN: 0, ncD: 1, ncN: 1 },
     // Waitemata (4)
-    { first: 'Zoe', last: 'Fletcher', watch: 'Blue', station: 'Albany', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 2, otNights: 1 },
-    { first: 'Tipene', last: 'Rata', watch: 'Blue', station: 'Devonport', rank: 'QFF', quals: { driver: true, not_rookie: true }, otDays: 5, otNights: 2 },
-    { first: 'Kate', last: 'Sullivan', watch: 'Blue', station: 'Silverdale', rank: 'SFF', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 3, otNights: 1 },
-    { first: 'Rongo', last: 'Parata', watch: 'Blue', station: 'Takapuna', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 4, otNights: 2 },
+    { first: 'Zoe', last: 'Fletcher', watch: 'Blue', station: 'Albany', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Tipene', last: 'Rata', watch: 'Blue', station: 'Devonport', rank: 'QFF', quals: { driver: true, not_rookie: true }, cbD: 3, cbN: 1, ncD: 2, ncN: 1 },
+    { first: 'Kate', last: 'Sullivan', watch: 'Blue', station: 'Silverdale', rank: 'SFF', quals: { driver: true, not_rookie: true, prt: true, type4: true }, cbD: 2, cbN: 0, ncD: 1, ncN: 1 },
+    { first: 'Rongo', last: 'Parata', watch: 'Blue', station: 'Takapuna', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, cbD: 3, cbN: 1, ncD: 1, ncN: 1 },
     // Auckland (3)
-    { first: 'Oliver', last: 'Hunt', watch: 'Blue', station: 'Grey Lynn', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
-    { first: 'Marama', last: 'Te Awa', watch: 'Blue', station: 'Henderson', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 2, otNights: 0 },
-    { first: 'Gary', last: 'Chen', watch: 'Blue', station: 'St Heliers', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, otDays: 1, otNights: 0 },
+    { first: 'Oliver', last: 'Hunt', watch: 'Blue', station: 'Grey Lynn', rank: 'FF', quals: { driver: true, not_rookie: true }, cbD: 4, cbN: 2, ncD: 2, ncN: 1 },
+    { first: 'Marama', last: 'Te Awa', watch: 'Blue', station: 'Henderson', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, cbD: 1, cbN: 0, ncD: 1, ncN: 0 },
+    { first: 'Gary', last: 'Chen', watch: 'Blue', station: 'St Heliers', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, cbD: 0, cbN: 0, ncD: 1, ncN: 0 },
   ];
 
   for (const ff of firefighters) {
+    const otDays = ff.cbD + ff.ncD;
+    const otNights = ff.cbN + ff.ncN;
     await query(
-      `INSERT INTO firefighters (first_name, last_name, email, station_id, watch, rank, ot_count_days, ot_count_nights, is_active, qualifications)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO firefighters (first_name, last_name, email, station_id, watch, rank, 
+       ot_count_days, ot_count_nights, ot_count_callback_days, ot_count_callback_nights,
+       ot_count_noncallback_days, ot_count_noncallback_nights, is_active, qualifications)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         ff.first,
         ff.last,
@@ -212,8 +217,12 @@ export async function seedDatabase() {
         stationIds[ff.station],
         ff.watch,
         ff.rank,
-        ff.otDays,
-        ff.otNights,
+        otDays,
+        otNights,
+        ff.cbD,
+        ff.cbN,
+        ff.ncD,
+        ff.ncN,
         true,
         JSON.stringify(ff.quals),
       ]
