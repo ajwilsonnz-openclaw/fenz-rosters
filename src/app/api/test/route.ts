@@ -44,8 +44,8 @@ const KNOWN_RESULT_SIMPLE = {
     { stationName: 'Albany', slots: 2, specialist: null },
   ],
   expectedAssignments: [
-    { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'might', reason: 'Lowest distance Blue Waitemata (0km, home station Albany)' },
-    { name: 'Kate Sullivan', watch: 'Blue', threshold: 'might', reason: 'Second closest Blue Waitemata (4km, Silverdale)' },
+    { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'might', reason: 'Blue CB FF, Albany→Albany 0km' },
+    { name: 'Tipene Rata', watch: 'Blue', threshold: 'might', reason: 'Blue CB FF, Devonport→Albany 14km (closer than Kate 21km)' },
   ],
 };
 
@@ -53,14 +53,18 @@ const KNOWN_RESULT_SIMPLE = {
 // Tests: callback district restriction, specialist qualification filtering,
 //        cross-station assignedIds tracking, non-callback fallback
 //
+// Distances (updated 2026-04-17 from OSRM + Adam's verified data):
+//   Albany→Albany=0, Devonport→Albany=14, Silverdale→Albany=21
+//   Silverdale→Silverdale=0, Devonport→Silverdale=30
+//   Henderson→Takapuna=24, Devonport→Takapuna=15
+//
 // Station processing order (sequential, shared assignedIds):
-//   1. Albany (2 slots, no spec) → Blue callback pool: Zoe(0km), Kate(4km), Rongo(6km), Tipene(15km)
-//      All OT=0 → sort by dist → Zoe + Kate assigned → Rongo/Tipene locked_out
-//   2. Silverdale (1 slot, prt required) → Blue CB: Rongo(no prt→skip), Tipene(no prt→skip) = 0 CB candidates
-//      → Green NC FF: Sarah Mitchell(Devonport→Silverdale=19km, prt✅), Jordan Park(Silverdale=0km, NO prt→skip)
-//        Emma Chen is SO rank, excluded from FF phases → Sarah assigned
-//   3. Takapuna (1 slot, no spec) → Blue CB: Rongo(Takapuna=0km), Tipene(Devonport=4km)
-//      → Rongo assigned
+//   1. Albany (2 slots, no spec) → Blue CB FF pool: Zoe(0km), Tipene(14km), Kate(21km)
+//      All OT=0 → sort by dist → Zoe + Tipene assigned
+//   2. Silverdale (1 slot, prt) → Remaining Blue CB FFs with prt: Kate(Silverdale→Silverdale=0km, prt✅)
+//      Kate assigned
+//   3. Takapuna (1 slot, no spec) → Remaining Blue CB FFs: Marama Te Awa(Henderson→Takapuna=24km)
+//      Only remaining Waitemata Blue FF-rank → Marama assigned
 const KNOWN_RESULT_COMPLEX = {
   id: 'known-result-complex',
   name: 'Known Result — 3 Stations + Specialist',
@@ -72,16 +76,13 @@ const KNOWN_RESULT_COMPLEX = {
     { stationName: 'Takapuna', slots: 1, specialist: null },
   ],
   expectedAssignments: [
-    // Albany: 2 closest Blue callback FF
-    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB, Albany→Albany 0km' },
-    { name: 'Kate Sullivan', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB, Silverdale→Albany 4km' },
-    // Silverdale: prt required, Blue CB FFs (Rongo, Tipene) lack prt
-    // Falls to Phase 2: In-district FF non-callback with prt
-    // Sarah Mitchell (QFF, Devonport, prt✅, 19km) is the only Waitemata FF with prt
-    { name: 'Sarah Mitchell', station: 'Silverdale', watch: 'Green', phase: 'ff-noncallback', reason: 'Green NC FF, Devonport→Silverdale 19km, has prt' },
-    // Takapuna: remaining Blue CB FFs — Rongo is SO (excluded from FF phases)
-    // Tipene Rata (QFF, Devonport, 4km to Takapuna) is the remaining Blue FF
-    { name: 'Tipene Rata', station: 'Takapuna', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Devonport→Takapuna 4km' },
+    // Albany: 2 closest Blue CB FF in Waitemata
+    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Albany→Albany 0km' },
+    { name: 'Tipene Rata', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Devonport→Albany 14km' },
+    // Silverdale: prt required, Kate Sullivan (SFF, Silverdale, prt✅, 0km)
+    { name: 'Kate Sullivan', station: 'Silverdale', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Silverdale→Silverdale 0km, has prt' },
+    // Takapuna: remaining Blue CB FF — Marama Te Awa (QFF, Henderson, 24km)
+    { name: 'Marama Te Awa', station: 'Takapuna', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Henderson→Takapuna 24km' },
   ],
 };
 

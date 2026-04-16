@@ -1,12 +1,14 @@
 // FENZ Overtime Seed Script
-// Populates all 35 stations, areas, distances, watch anchors, 20+ firefighters, system settings
+// Populates 29 stations across 3 districts, full distance table, watch anchors, 48 firefighters
 
 import { query } from '../lib/db';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export async function seedDatabase() {
   console.log('🌱 Starting database seed...');
 
-  // --- 1. Areas ---
+  // --- 1. Clear existing data (FK-safe order) ---
   await query(`DELETE FROM ot_count_log`);
   await query(`DELETE FROM audit_logs`);
   await query(`DELETE FROM ot_assignments`);
@@ -24,7 +26,7 @@ export async function seedDatabase() {
 
   console.log('  ✅ Cleared existing data');
 
-  // Areas
+  // --- 2. Areas ---
   const areaWaitemata = await query(`INSERT INTO areas (name) VALUES ('Waitemata') RETURNING id`);
   const areaAuckland = await query(`INSERT INTO areas (name) VALUES ('Auckland') RETURNING id`);
   const areaCountiesManukau = await query(`INSERT INTO areas (name) VALUES ('Counties Manukau') RETURNING id`);
@@ -35,141 +37,89 @@ export async function seedDatabase() {
 
   console.log('  ✅ Areas created');
 
-  // --- 2. Stations ---
-  const stationMap: Record<string, { name: string; areaId: number; district?: string; specialist?: boolean; specialistType?: string }> = {
-    // Waitemata (North Shore + West)
-    'Albany': { name: 'Albany', areaId: waitemataId },
-    'Avondale': { name: 'Avondale', areaId: aucklandId },
-    'Birkenhead': { name: 'Birkenhead', areaId: waitemataId },
-    'Devonport': { name: 'Devonport', areaId: waitemataId },
-    'East Coast Bays': { name: 'East Coast Bays', areaId: waitemataId },
-    'Glenfield': { name: 'Glenfield', areaId: waitemataId },
-    'Glen Eden': { name: 'Glen Eden', areaId: aucklandId },
-    'Grey Lynn': { name: 'Grey Lynn', areaId: aucklandId },
-    'Henderson': { name: 'Henderson', areaId: aucklandId },
-    'Ponsonby': { name: 'Ponsonby', areaId: aucklandId },
-    'Silverdale': { name: 'Silverdale', areaId: waitemataId },
-    'Takapuna': { name: 'Takapuna', areaId: waitemataId },
-    'Te Atatu': { name: 'Te Atatu', areaId: aucklandId, specialist: true, specialistType: 'type4' },
-    'Titirangi': { name: 'Titirangi', areaId: aucklandId },
-    'Warkworth': { name: 'Warkworth', areaId: waitemataId },
-    'West Harbour': { name: 'West Harbour', areaId: aucklandId },
-    
-    // Auckland (Central City)
-    'Parnell': { name: 'Parnell', areaId: aucklandId },
-    'Remuera': { name: 'Remuera', areaId: aucklandId },
-    'St Heliers': { name: 'St Heliers', areaId: aucklandId },
-
-    // Counties Manukau (South)
-    'Balmoral': { name: 'Balmoral', areaId: countiesManukauId },
-    'Ellerslie': { name: 'Ellerslie', areaId: aucklandId },
-    'Howick': { name: 'Howick', areaId: countiesManukauId },
-    'Mangere': { name: 'Mangere', areaId: countiesManukauId },
-    'Manurewa': { name: 'Manurewa', areaId: countiesManukauId },
-    'Mt Roskill': { name: 'Mt Roskill', areaId: aucklandId },
-    'Mt Wellington': { name: 'Mt Wellington', areaId: countiesManukauId },
-    'Onehunga': { name: 'Onehunga', areaId: aucklandId },
-    'Oneroa': { name: 'Oneroa', areaId: countiesManukauId },
-    'Otahuhu': { name: 'Otahuhu', areaId: countiesManukauId },
-    'Otara': { name: 'Otara', areaId: countiesManukauId },
-    'Papakura': { name: 'Papakura', areaId: countiesManukauId },
-    'Waiuku': { name: 'Waiuku', areaId: countiesManukauId },
-
-    // Specialist stations (Adam to confirm — marking known ones)
-    'Auckland City': { name: 'Auckland City', areaId: aucklandId, specialist: true, specialistType: 'CBR' },
-    
-    // Reliever roles (out of scope but tracked)
-    'District Reliever': { name: 'District Reliever', areaId: aucklandId },
-    'Station Reliever': { name: 'Station Reliever', areaId: aucklandId },
-  };
+  // --- 3. Stations (29 total) ---
+  const stationDefs: { name: string; areaId: number }[] = [
+    // Waitemata (11)
+    { name: 'Albany', areaId: waitemataId },
+    { name: 'Birkenhead', areaId: waitemataId },
+    { name: 'Devonport', areaId: waitemataId },
+    { name: 'East Coast Bays', areaId: waitemataId },
+    { name: 'Glen Eden', areaId: waitemataId },
+    { name: 'Henderson', areaId: waitemataId },
+    { name: 'Silverdale', areaId: waitemataId },
+    { name: 'Takapuna', areaId: waitemataId },
+    { name: 'Te Atatu', areaId: waitemataId },
+    { name: 'Titirangi', areaId: waitemataId },
+    { name: 'West Harbour', areaId: waitemataId },
+    // Auckland (11)
+    { name: 'Auckland City', areaId: aucklandId },
+    { name: 'Avondale', areaId: aucklandId },
+    { name: 'Balmoral', areaId: aucklandId },
+    { name: 'Ellerslie', areaId: aucklandId },
+    { name: 'Grey Lynn', areaId: aucklandId },
+    { name: 'Mount Roskill', areaId: aucklandId },
+    { name: 'Mount Wellington', areaId: aucklandId },
+    { name: 'Onehunga', areaId: aucklandId },
+    { name: 'Parnell', areaId: aucklandId },
+    { name: 'Remuera', areaId: aucklandId },
+    { name: 'St Heliers', areaId: aucklandId },
+    // Counties Manukau (7)
+    { name: 'Howick', areaId: countiesManukauId },
+    { name: 'Mangere', areaId: countiesManukauId },
+    { name: 'Manurewa', areaId: countiesManukauId },
+    { name: 'Otahuhu', areaId: countiesManukauId },
+    { name: 'Otara', areaId: countiesManukauId },
+    { name: 'Papatoetoe', areaId: countiesManukauId },
+    { name: 'Papakura', areaId: countiesManukauId },
+  ];
 
   const stationIds: Record<string, number> = {};
-  for (const [, data] of Object.entries(stationMap)) {
+  for (const def of stationDefs) {
     const res = await query(
       `INSERT INTO stations (name, area_id, is_specialist, specialist_type) 
-       VALUES ($1, $2, $3, $4) 
+       VALUES ($1, $2, false, NULL) 
        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
        RETURNING id`,
-      [data.name, data.areaId, data.specialist || false, data.specialistType || null]
+      [def.name, def.areaId]
     );
-    stationIds[data.name] = res.rows[0].id;
+    stationIds[def.name] = res.rows[0].id;
   }
+
+  // Sync district column with area name
+  await query(`UPDATE stations s SET district = a.name FROM areas a WHERE s.area_id = a.id`);
 
   console.log(`  ✅ ${Object.keys(stationIds).length} stations created`);
 
-  // Update district column to match area name
-  await query(`UPDATE stations s SET district = a.name FROM areas a WHERE s.area_id = a.id`);
-  console.log('  ✅ Station district column synced with areas');
+  // --- 4. Station Distances (from OSRM + Adam's verified Waitemata data) ---
+  const distancePath = path.resolve(process.cwd(), 'data/station_distances.json');
+  const distanceData: { station: string; distances: Record<string, number>; area: string }[] = JSON.parse(
+    fs.readFileSync(distancePath, 'utf-8')
+  );
 
-  // --- 3. Station Distances ---
-  // Waitemata internal distances (realistic Auckland North Shore)
-  const waitemataDistances: Record<string, Record<string, number>> = {
-    'Albany': { 'Birkenhead': 14, 'Devonport': 15, 'East Coast Bays': 10, 'Glenfield': 8, 'Silverdale': 4, 'Takapuna': 6, 'Warkworth': 26 },
-    'Birkenhead': { 'Albany': 14, 'Devonport': 5, 'East Coast Bays': 12, 'Glenfield': 4, 'Silverdale': 18, 'Takapuna': 3, 'Warkworth': 40 },
-    'Devonport': { 'Albany': 15, 'Birkenhead': 5, 'East Coast Bays': 13, 'Glenfield': 8, 'Silverdale': 19, 'Takapuna': 4, 'Warkworth': 41 },
-    'East Coast Bays': { 'Albany': 10, 'Birkenhead': 12, 'Devonport': 13, 'Glenfield': 9, 'Silverdale': 14, 'Takapuna': 5, 'Warkworth': 36 },
-    'Glenfield': { 'Albany': 8, 'Birkenhead': 4, 'Devonport': 8, 'East Coast Bays': 9, 'Silverdale': 12, 'Takapuna': 3, 'Warkworth': 34 },
-    'Silverdale': { 'Albany': 4, 'Birkenhead': 18, 'Devonport': 19, 'East Coast Bays': 14, 'Glenfield': 12, 'Takapuna': 10, 'Warkworth': 22 },
-    'Takapuna': { 'Albany': 6, 'Birkenhead': 3, 'Devonport': 4, 'East Coast Bays': 5, 'Glenfield': 3, 'Silverdale': 10, 'Warkworth': 32 },
-    'Warkworth': { 'Albany': 26, 'Birkenhead': 40, 'Devonport': 41, 'East Coast Bays': 36, 'Glenfield': 34, 'Silverdale': 22, 'Takapuna': 32 },
-  };
-
-  // Cross-district distances from Waitemata to Auckland/CM stations
-  const crossDistances: Record<string, Record<string, number>> = {
-    'Albany': { 'Henderson': 27, 'Te Atatu': 24, 'Glen Eden': 31, 'Grey Lynn': 18, 'Ponsonby': 16, 'Auckland City': 18, 'Avondale': 22, 'St Heliers': 20, 'Howick': 28, 'Mangere': 30, 'Manurewa': 35, 'Otara': 32, 'Botany': 33, 'Papakura': 40, 'Remuera': 17, 'Parnell': 17 },
-    'Takapuna': { 'Henderson': 20, 'Te Atatu': 17, 'Glen Eden': 24, 'Grey Lynn': 8, 'Ponsonby': 7, 'Auckland City': 9, 'Avondale': 14, 'St Heliers': 12, 'Howick': 22, 'Mangere': 24, 'Manurewa': 30, 'Otara': 26, 'Botany': 27, 'Papakura': 35, 'Remuera': 10, 'Parnell': 9 },
-    'Devonport': { 'Henderson': 24, 'Te Atatu': 21, 'Glen Eden': 28, 'Grey Lynn': 12, 'Ponsonby': 10, 'Auckland City': 12, 'Avondale': 18, 'St Heliers': 15, 'Howick': 25, 'Mangere': 28, 'Manurewa': 33, 'Otara': 30, 'Botany': 31, 'Papakura': 38, 'Remuera': 13, 'Parnell': 12 },
-  };
-
-  // Insert Waitemata internal distances
-  for (const [from, targets] of Object.entries(waitemataDistances)) {
-    if (!stationIds[from]) continue;
-    for (const [to, dist] of Object.entries(targets)) {
-      if (!stationIds[to]) continue;
+  let distCount = 0;
+  for (const entry of distanceData) {
+    const fromId = stationIds[entry.station];
+    if (!fromId) continue;
+    for (const [dstKey, km] of Object.entries(entry.distances)) {
+      // Convert key back to station name (lowercase_underscore → Title Case)
+      const dstName = Object.keys(stationIds).find(
+        n => n.toLowerCase().replace(/ /g, '_') === dstKey
+      );
+      if (!dstName || dstName === entry.station) continue;
+      const toId = stationIds[dstName];
+      if (!toId) continue;
       await query(
         `INSERT INTO station_distances (station_id, other_station_id, distance_km)
          VALUES ($1, $2, $3) ON CONFLICT (station_id, other_station_id) DO UPDATE SET distance_km = $3`,
-        [stationIds[from], stationIds[to], dist]
+        [fromId, toId, km]
       );
+      distCount++;
     }
   }
 
-  // Insert cross-district distances (bidirectional)
-  for (const [from, targets] of Object.entries(crossDistances)) {
-    if (!stationIds[from]) continue;
-    for (const [to, dist] of Object.entries(targets)) {
-      if (!stationIds[to]) continue;
-      await query(
-        `INSERT INTO station_distances (station_id, other_station_id, distance_km)
-         VALUES ($1, $2, $3) ON CONFLICT (station_id, other_station_id) DO UPDATE SET distance_km = $3`,
-        [stationIds[from], stationIds[to], dist]
-      );
-      await query(
-        `INSERT INTO station_distances (station_id, other_station_id, distance_km)
-         VALUES ($1, $2, $3) ON CONFLICT (station_id, other_station_id) DO UPDATE SET distance_km = $3`,
-        [stationIds[to], stationIds[from], dist]
-      );
-    }
-  }
+  console.log(`  ✅ ${distCount} station distances populated`);
 
-  // Set all missing distances to 0 (Adam will fill later)
-  const allStationIds = Object.values(stationIds);
-  for (const fromId of allStationIds) {
-    for (const toId of allStationIds) {
-      if (fromId !== toId) {
-        await query(
-          `INSERT INTO station_distances (station_id, other_station_id, distance_km)
-           VALUES ($1, $2, 0) 
-           ON CONFLICT (station_id, other_station_id) DO NOTHING`,
-          [fromId, toId]
-        );
-      }
-    }
-  }
-
-  console.log('  ✅ Station distances populated');
-
-  // --- 4. Watch Anchors ---
+  // --- 5. Watch Anchors ---
   await query(`INSERT INTO watch_anchors (watch, anchor_date, note) VALUES 
     ('Green', '2026-01-31', 'Saturday anchor'),
     ('Red', '2026-02-02', 'Monday anchor'),
@@ -180,8 +130,7 @@ export async function seedDatabase() {
 
   console.log('  ✅ Watch anchors created');
 
-  // --- 5. Firefighters (12 per watch, 48 total) ---
-  // Distributed across all 3 districts with varied ranks, quals, and OT counts
+  // --- 6. Firefighters (12 per watch, 48 total) ---
   const firefighters = [
     // ═══ GREEN WATCH (12) ═══
     // Waitemata (5)
@@ -193,7 +142,7 @@ export async function seedDatabase() {
     // Auckland (4)
     { first: 'Nina', last: 'Kowalski', watch: 'Green', station: 'Henderson', rank: 'FF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 4, otNights: 2 },
     { first: 'Rangi', last: 'Tuhoe', watch: 'Green', station: 'Grey Lynn', rank: 'QFF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
-    { first: 'David', last: 'Wu', watch: 'Green', station: 'Ponsonby', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, otDays: 3, otNights: 1 },
+    { first: 'David', last: 'Wu', watch: 'Green', station: 'Grey Lynn', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, otDays: 3, otNights: 1 },
     { first: 'Lisa', last: 'Campbell', watch: 'Green', station: 'Te Atatu', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, otDays: 1, otNights: 0 },
     // Counties Manukau (3)
     { first: 'Ben', last: 'Tafua', watch: 'Green', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 7, otNights: 3 },
@@ -203,7 +152,7 @@ export async function seedDatabase() {
     // ═══ RED WATCH (12) ═══
     // Auckland (5)
     { first: 'Liam', last: 'OBrien', watch: 'Red', station: 'Auckland City', rank: 'FF', quals: { driver: true, not_rookie: true, CBR: true }, otDays: 4, otNights: 2 },
-    { first: 'Aroha', last: 'Te Rangi', watch: 'Red', station: 'Ponsonby', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 6, otNights: 3 },
+    { first: 'Aroha', last: 'Te Rangi', watch: 'Red', station: 'Grey Lynn', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 6, otNights: 3 },
     { first: 'Marcus', last: 'Williams', watch: 'Red', station: 'Grey Lynn', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 2, otNights: 1 },
     { first: 'Hemi', last: 'Ngata', watch: 'Red', station: 'St Heliers', rank: 'SFF', quals: { driver: true, not_rookie: true, type4: true }, otDays: 7, otNights: 3 },
     { first: 'Priya', last: 'Sharma', watch: 'Red', station: 'Auckland City', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true, CBR: true }, otDays: 1, otNights: 0 },
@@ -215,7 +164,7 @@ export async function seedDatabase() {
     // Counties Manukau (3)
     { first: 'Tyler', last: 'Patel', watch: 'Red', station: 'Manurewa', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 4, otNights: 2 },
     { first: 'Anika', last: 'Singh', watch: 'Red', station: 'Papakura', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 3, otNights: 1 },
-    { first: 'Rawiri', last: 'Tamati', watch: 'Red', station: 'Botany', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 1, otNights: 0 },
+    { first: 'Rawiri', last: 'Tamati', watch: 'Red', station: 'Howick', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 1, otNights: 0 },
 
     // ═══ BROWN WATCH (12) ═══
     // Auckland (5)
@@ -228,7 +177,7 @@ export async function seedDatabase() {
     { first: 'Luke', last: 'Tanner', watch: 'Brown', station: 'Devonport', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 4, otNights: 2 },
     { first: 'Hinewai', last: 'Ruru', watch: 'Brown', station: 'Takapuna', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 6, otNights: 3 },
     { first: 'Pete', last: 'Douglas', watch: 'Brown', station: 'East Coast Bays', rank: 'SFF', quals: { driver: true, not_rookie: true }, otDays: 3, otNights: 1 },
-    { first: 'Whina', last: 'Cooper', watch: 'Brown', station: 'Warkworth', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 1, otNights: 0 },
+    { first: 'Whina', last: 'Cooper', watch: 'Brown', station: 'Silverdale', rank: 'SO', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 1, otNights: 0 },
     // Counties Manukau (3)
     { first: 'Matt', last: 'Young', watch: 'Brown', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 7, otNights: 3 },
     { first: 'Aria', last: 'Matene', watch: 'Brown', station: 'Mangere', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 2, otNights: 1 },
@@ -237,7 +186,7 @@ export async function seedDatabase() {
     // ═══ BLUE WATCH (12) ═══
     // Counties Manukau (5)
     { first: 'Tommy', last: 'Ahu', watch: 'Blue', station: 'Howick', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
-    { first: 'Fiona', last: 'Cameron', watch: 'Blue', station: 'Botany', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 4, otNights: 2 },
+    { first: 'Fiona', last: 'Cameron', watch: 'Blue', station: 'Howick', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 4, otNights: 2 },
     { first: 'Sam', last: 'Tong', watch: 'Blue', station: 'Manurewa', rank: 'SFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 7, otNights: 4 },
     { first: 'Mere', last: 'Whare', watch: 'Blue', station: 'Mangere', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 1, otNights: 0 },
     { first: 'Alex', last: 'Brown', watch: 'Blue', station: 'Otara', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 3, otNights: 1 },
@@ -247,7 +196,7 @@ export async function seedDatabase() {
     { first: 'Kate', last: 'Sullivan', watch: 'Blue', station: 'Silverdale', rank: 'SFF', quals: { driver: true, not_rookie: true, prt: true, type4: true }, otDays: 3, otNights: 1 },
     { first: 'Rongo', last: 'Parata', watch: 'Blue', station: 'Takapuna', rank: 'SO', quals: { driver: true, not_rookie: true, type4: true }, otDays: 4, otNights: 2 },
     // Auckland (3)
-    { first: 'Oliver', last: 'Hunt', watch: 'Blue', station: 'Ponsonby', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
+    { first: 'Oliver', last: 'Hunt', watch: 'Blue', station: 'Grey Lynn', rank: 'FF', quals: { driver: true, not_rookie: true }, otDays: 6, otNights: 3 },
     { first: 'Marama', last: 'Te Awa', watch: 'Blue', station: 'Henderson', rank: 'QFF', quals: { driver: true, not_rookie: true, prt: true }, otDays: 2, otNights: 0 },
     { first: 'Gary', last: 'Chen', watch: 'Blue', station: 'St Heliers', rank: 'SSO', quals: { driver: true, not_rookie: true, type4: true, prt: true }, otDays: 1, otNights: 0 },
   ];
@@ -273,7 +222,7 @@ export async function seedDatabase() {
 
   console.log(`  ✅ ${firefighters.length} firefighters seeded`);
 
-  // --- 6. System Settings ---
+  // --- 7. System Settings ---
   await query(`INSERT INTO system_settings (key, value, description) VALUES 
     ('ot_offer_mode', '"mandatory"', 'mandatory or accept_decline'),
     ('relievers_enabled', 'true', 'Whether to auto-deploy district relievers'),
