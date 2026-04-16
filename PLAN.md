@@ -103,10 +103,10 @@ Anchors (cycle day 0 = first Day):
 ### 5-Phase Cascade (Current Implementation)
 Stations are processed **sequentially** (one at a time). For each station:
 
-1. **Phase 1 — Callback Pool:** FF with active callback, sorted by must/might threshold → lowest OT → closest distance
-2. **Phase 2 — Non-Callback (Waitemata only):** Off-duty FF from same district, no callback. Must want to work (`want_to_work_day/night`)
+1. **Phase 1 — Callback Pool (SAME DISTRICT):** FF with active callback FROM THE SAME DISTRICT as the requesting station, sorted by must/might threshold → lowest OT → closest distance
+2. **Phase 2 — Non-Callback (SAME DISTRICT):** Off-duty FF from same district, no callback. Must want to work (`want_to_work_day/night`)
 3. **Phase 3 — Out-of-District:** FF from other districts. Max 1 per district per watch.
-4. **Phase 4 — SO Fallback:** Station Officers from other districts
+4. **Phase 4 — SO Fallback:** Station Officers from any district
 5. **Phase 5 — SSO Fallback:** Senior Station Officers from other districts
 
 After all stations are processed, a **specialist steal pass** runs: if specialist stations (prt, type4, etc.) are still short, steal the closest qualified FF from a non-specialist station that has >1 assigned.
@@ -124,17 +124,33 @@ After all stations are processed, a **specialist steal pass** runs: if specialis
 
 ## 6. Test Scenario (`src/app/api/test/route.ts`)
 
-Single hardcoded scenario: **"Waitemata Day — 6 Stations"**
-- Date: 2026-04-10
-- Shift: Day
-- Stations: Albany (3 slots), Devonport (2), Silverdale (2, prt), Takapuna (2), Henderson (2, prt), Te Atatu (2, type4)
-- Total: 13 slots across 6 stations
+**Seed Data:** 48 firefighters (12 per watch), 35 stations, 3 districts (Waitemata, Auckland, Counties Manukau).
+
+### Default Scenario: "Waitemata Day — 5 Stations"
+- Date: 2026-04-10 (Blue=#1 callback, Green=Off non-callback)
+- Stations: Albany (3 slots), Devonport (2), Silverdale (2), Takapuna (2), East Coast Bays (2)
+- Total: 11 slots across 5 Waitemata stations, no specialist requirements
+- **Result:** 11/11 filled — Blue=4 (callback), Green=7 (5 non-callback + 2 out-of-district)
+
+### Known-Result Simple: "Albany 2-slot"
+- `POST /api/test` with body `{"scenario": "known-result-simple"}`
+- 1 station, 2 slots, no specialist
+- **Expected:** Zoe Fletcher (0km) + Kate Sullivan (4km) — both Blue callback, sorted by distance
+- ✅ PASSING
+
+### Known-Result Complex: "3 Stations + Specialist"
+- `POST /api/test` with body `{"scenario": "known-result-complex"}`
+- 3 stations: Albany(2), Silverdale(1,prt), Takapuna(1)
+- Tests: district restriction, specialist filtering, cross-station tracking, phase fallback
+- **Expected:** Zoe+Kate→Albany(CB), Emma→Silverdale(NC,prt), Rongo→Takapuna(CB)
+- ✅ PASSING
 
 **API:** `POST /api/test` — runs the full allocation and returns JSON with:
 - `watchMatrix` — which watches are eligible
 - `stationResults` — per-station assignments + trace logs
-- `allFirefightersDetail` — all 20 FFs with assignment status
+- `allFirefightersDetail` — all 48 FFs with assignment status
 - `availableOvertimes` — expanded slot list
+- `knownResultCheck` — expected vs actual comparison (for known-result scenarios)
 
 **Reset:** `POST /api/test` with body `{"action":"reset_ot_counts"}` — zeroes all OT counters
 
@@ -173,20 +189,29 @@ src/
 
 ## 8. Known Bugs (ACTIVE)
 
-### Bug 1: Trace Log Mismatch (Medium Priority)
-**Symptom:** The trace logs in the API response show different firefighters being "ASSIGNED" than what actually appears in the `assignedFirefighters` array.
-**Example:** Trace shows "ASSIGNED: Wiremu Hemara" and "ASSIGNED: Tane Rawiri" for Takapuna, but actual result shows Sarah Mitchell and Jordan Park.
-**Cause:** Likely related to the specialist steal pass running AFTER trace logs are captured. The trace logs record initial assignments, but `stealForSpecialists()` mutates the `assignedFirefighters` arrays in-place without updating traces.
-**Fix needed:** Either update trace logs after specialist steal, or capture trace in a way that reflects final state.
+### Bug 1: Trace Log Mismatch (FIXED — 2026-04-16)
+**Was:** Trace logs showed pre-steal assignments. `stealForSpecialists()` mutated arrays without updating traces.
+**Fix:** Specialist steal now records STOLEN/LOST trace entries in both donor and recipient station traces.
 
-### Bug 2: Unfilled Specialist Slots (By Design, But Needs More FF)
-**Symptom:** Henderson (2 prt slots) and Te Atatu (2 type4 slots) get 0 direct assignments because by the time they're processed, all eligible FF are already assigned to earlier stations.
-**Root cause:** Only 20 FF in pool, 13 slots needed. With only 5 Blue (callback) + 5 Green (non-callback) eligible = 10 candidates for 13 slots. Need 40-50 FF for realistic testing.
-**Fix:** Run `POST /api/seed` or add more firefighters via `/generate` page.
+### Bug 2: Unfilled Specialist Slots (RESOLVED — Data Expansion)
+**Was:** Only 20 FF for 13 slots. Now 48 FF (12 per watch) across all 3 districts.
+**Fix:** Expanded seed data + removed non-Waitemata stations from test scenario. All 11 slots fill.
 
 ### Bug 3: PG NULL Parameter Type (FIXED)
 Previously: `INSERT INTO ot_assignments` failed with "inconsistent types deduced for parameter" when callback was null.
 **Fix applied:** Uses `CAST($4 AS varchar)` and `callback || 'none'` string default.
+
+### Bug 4: Callback Monopolizing All Slots (FIXED — 2026-04-16)
+**Was:** Callback phase pulled FF from ALL districts, filling all slots before local non-callback FFs got a chance.
+**Fix:** Callback phase now restricted to same district as requesting station. Cascade: same-district callback → same-district non-callback → out-of-district → SO → SSO.
+
+### Bug 5: Distance=0 Treated as 999km (FIXED — 2026-04-16)
+**Was:** `pool.distances[id] || 999` treated 0km (same station) as 999km due to JS falsy `0`.
+**Fix:** Changed to `pool.distances[id] ?? 999` throughout. Also added `getDistance()` self-station shortcut.
+
+### Bug 6: Threshold Tiebreaker Ignored Distance (FIXED — 2026-04-16)
+**Was:** `computeMustMightWonThreshold()` didn't sort within tied OT groups by distance.
+**Fix:** Now accepts optional `distances` param and sorts tied groups by distance before assigning thresholds.
 
 ---
 
