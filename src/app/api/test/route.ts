@@ -216,6 +216,18 @@ function stealForSpecialists(
         cascadePhase: 'specialist-steal',
         stolenFrom: bestSteal.fromStation.stationName,
       });
+
+      // Fix trace log mismatch: record steal events in both stations' traces
+      if (!spec.traceLogs) spec.traceLogs = [];
+      spec.traceLogs.push({ phase: 'specialist-steal', logs: [{
+        type: 'assign', message: `STOLEN: ${stolen.name} from ${bestSteal.fromStation.stationName}`,
+        detail: `${stolen.watch} | needs ${spec.specialist} | dist=${bestSteal.dist}km`
+      }]});
+      if (!bestSteal.fromStation.traceLogs) bestSteal.fromStation.traceLogs = [];
+      bestSteal.fromStation.traceLogs.push({ phase: 'specialist-steal', logs: [{
+        type: 'skip', message: `LOST: ${stolen.name} stolen by ${spec.stationName}`,
+        detail: `Required ${spec.specialist} qualification`
+      }]});
     }
   }
 }
