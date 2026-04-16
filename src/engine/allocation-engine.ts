@@ -1,11 +1,20 @@
 // FENZ Overtime Allocation Engine — Full Spec Implementation
 //
-// CASCADING ALLOCATION (the "10pm touch of a button" feature):
-// Phase 1 (callback)     → callback-eligible firefighters IN THE SAME DISTRICT
-// Phase 2 (non-callback) → same-district non-callback firefighters (off-duty, wanting OT)
-// Phase 3 (out-of-district) → 1 lowest-OT firefighter per OTHER district
-// Phase 4 (SO)           → All SO-rank firefighters who want to work
-// Phase 5 (SSO)          → All SSO-rank firefighters who want to work
+// CASCADING ALLOCATION — FIREFIGHTER OT (8 phases):
+// Phase 1: In-district FF callback
+// Phase 2: In-district FF non-callback
+// Phase 3: Nearest out-of-district FF callback
+// Phase 4: Nearest out-of-district FF non-callback
+// Phase 5: SO anywhere callback
+// Phase 6: SSO anywhere callback
+// Phase 7: SO anywhere non-callback
+// Phase 8: SSO anywhere non-callback
+//
+// FF ranks: FF, QFF, SFF (phases 1-4)
+// Officer ranks: SO (phases 5,7), SSO (phases 6,8)
+//
+// OT counters per firefighter: callback_days, callback_nights, noncallback_days, noncallback_nights
+// Sort within each phase: threshold → lowest relevant OT count → nearest distance
 
 import { Pool } from 'pg';
 import { getShift, getCallbackType, getShiftStatus } from './watch-math';
@@ -19,7 +28,7 @@ export type ShiftType = 'Day' | 'Night';
 export type Rank = 'FF' | 'QFF' | 'SFF' | 'SO' | 'SSO';
 export type MustMightWont = 'must' | 'might' | 'locked_out' | 'won_t';
 export type CallbackType = '#1-BeforeDay1' | '#2a-EveningDay2' | '#2b-DayOfNight1' | '#3-AfterLastNight' | null;
-export type CascadePhase = 'callback' | 'non-callback' | 'out-of-district' | 'SO' | 'SSO';
+export type CascadePhase = 'ff-callback' | 'ff-noncallback' | 'ood-ff-callback' | 'ood-ff-noncallback' | 'so-callback' | 'sso-callback' | 'so-noncallback' | 'sso-noncallback';
 
 export interface Firefighter {
   id: number;
@@ -329,89 +338,141 @@ interface TraceEntry {
   detail?: string;
 }
 
+const FF_RANKS = new Set(['FF', 'QFF', 'SFF']);
+
+function isFFRank(rank: string): boolean { return FF_RANKS.has(rank); }
+
+function getRelevantOTCount(ff: Firefighter, isCallback: boolean, shiftType: ShiftType): number {
+  if (isCallback) return shiftType === 'Day' ? ff.ot_count_callback_days : ff.ot_count_callback_nights;
+  return shiftType === 'Day' ? ff.ot_count_noncallback_days : ff.ot_count_noncallback_nights;
+}
+
 function buildCascadePool(phase: CascadePhase, request: OTRequest, otDate: Date, allFirefighters: Firefighter[], assignedThisRun: Set<number>, distanceMatrix: DistanceMatrix, slotsRemaining: number): CascadePool {
   const traceLog: TraceEntry[] = [];
   let candidates: Firefighter[] = [];
+  const reqDistrict = request.station_district || 'Waitemata';
 
-  if (phase === 'callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 1: Callback Pool (${request.station_district || 'any'} district) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (assignedThisRun.has(ff.id)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: 'Already assigned this run' }); return false; }
-      if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Missing qualifications' }); return false; }
-      // District restriction: callback pool only includes FFs from the requesting station's district
-      if (request.station_district && ff.district !== request.station_district) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: `${ff.district} district (need ${request.station_district})` }); return false; }
-      const r = passesCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) { traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | shift=${getShift(ff.watch, otDate)} | cb=${getCallbackType(ff.watch, otDate)}` }); }
-      else { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason }); }
-      return r.pass;
-    });
+  // Helper: common pre-checks
+  function preCheck(ff: Firefighter, label: string): boolean {
+    if (assignedThisRun.has(ff.id)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Already assigned' }); return false; }
+    if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Missing qualifications' }); return false; }
+    return true;
   }
-  else if (phase === 'non-callback') {
-    const reqDistrict = request.station_district || 'Waitemata';
-    traceLog.push({ type: 'header', message: `━━━ Phase 2: Non-Callback ${reqDistrict} ━━━` });
+
+  // ─── Phase 1: In-district FF callback ───
+  if (phase === 'ff-callback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 1: In-District FF Callback (${reqDistrict}) ━━━` });
     candidates = allFirefighters.filter(ff => {
-      if (assignedThisRun.has(ff.id)) return false;
-      if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) return false;
+      if (!preCheck(ff, 'P1')) return false;
+      if (!isFFRank(ff.rank)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.rank} (officer, skip)` }); return false; }
       if (ff.district !== reqDistrict) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.district} (not ${reqDistrict})` }); return false; }
-      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | CB=${getCallbackType(ff.watch, otDate)} | OT=${ff.total_ot_count}` });
+      const r = passesCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | cb=${getCallbackType(ff.watch, otDate)} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
       else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
       return r.pass;
     });
   }
-  else if (phase === 'out-of-district') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 3: Out-of-District (1 per district) ━━━` });
-    const eligible = allFirefighters.filter(ff => {
-      if (assignedThisRun.has(ff.id)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Already assigned' }); return false; }
-      if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Missing qualifications' }); return false; }
-      // CRITICAL: Universal watch eligibility — excludes Red #3, Brown #2a on Day shifts, etc.
-      const watchCheck = canDoOT(ff, otDate, request.shift_type);
-      if (!watchCheck.pass) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: watchCheck.reason }); return false; }
-      if (ff.district === (request.station_district || 'Waitemata')) return false;
-      if (request.shift_type === 'Day' && !ff.want_to_work_day) return false;
-      if (request.shift_type === 'Night' && !ff.want_to_work_night) return false;
-      return true;
-    });
-    const byDistrict = new Map<string, Firefighter[]>();
-    for (const ff of eligible) {
-      const d = ff.district || 'Unknown';
-      if (!byDistrict.has(d)) byDistrict.set(d, []);
-      byDistrict.get(d)!.push(ff);
-    }
-    for (const [district, ffs] of byDistrict) {
-      ffs.sort((a, b) => a.total_ot_count - b.total_ot_count);
-      const picked = ffs[0];
-      if (picked) { candidates.push(picked); traceLog.push({ type: 'pass', message: `${picked.first_name} ${picked.last_name}`, detail: `${picked.district} pick (${picked.watch}, OT=${picked.total_ot_count}) from ${ffs.length}` }); }
-    }
-  }
-  else if (phase === 'SO') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 4: Station Officers (SO) Fallback ━━━` });
+  // ─── Phase 2: In-district FF non-callback ───
+  else if (phase === 'ff-noncallback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 2: In-District FF Non-Callback (${reqDistrict}) ━━━` });
     candidates = allFirefighters.filter(ff => {
-      if (assignedThisRun.has(ff.id)) return false;
-      if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) return false;
-      const r = passesRankFilter(ff, otDate, request.shift_type, 'SO');
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.rank} | ${ff.watch} | ${ff.district} | OT=${ff.total_ot_count}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.rank})`, detail: r.reason });
+      if (!preCheck(ff, 'P2')) return false;
+      if (!isFFRank(ff.rank)) return false;
+      if (ff.district !== reqDistrict) return false;
+      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
       return r.pass;
     });
   }
-  else if (phase === 'SSO') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 5: Senior Station Officers (SSO) Fallback ━━━` });
+  // ─── Phase 3: Nearest OOD FF callback ───
+  else if (phase === 'ood-ff-callback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 3: Out-of-District FF Callback (nearest) ━━━` });
     candidates = allFirefighters.filter(ff => {
-      if (assignedThisRun.has(ff.id)) return false;
-      if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) return false;
-      const r = passesRankFilter(ff, otDate, request.shift_type, 'SSO');
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.rank} | ${ff.watch} | ${ff.district} | OT=${ff.total_ot_count}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.rank})`, detail: r.reason });
+      if (!preCheck(ff, 'P3')) return false;
+      if (!isFFRank(ff.rank)) return false;
+      if (ff.district === reqDistrict) return false; // must be OOD
+      const r = passesCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.district} | ${ff.station_name} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
+      return r.pass;
+    });
+  }
+  // ─── Phase 4: Nearest OOD FF non-callback ───
+  else if (phase === 'ood-ff-noncallback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 4: Out-of-District FF Non-Callback (nearest) ━━━` });
+    candidates = allFirefighters.filter(ff => {
+      if (!preCheck(ff, 'P4')) return false;
+      if (!isFFRank(ff.rank)) return false;
+      if (ff.district === reqDistrict) return false;
+      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.district} | ${ff.station_name} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
+      return r.pass;
+    });
+  }
+  // ─── Phase 5: SO anywhere callback ───
+  else if (phase === 'so-callback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 5: Station Officer Callback (anywhere) ━━━` });
+    candidates = allFirefighters.filter(ff => {
+      if (!preCheck(ff, 'P5')) return false;
+      if (ff.rank !== 'SO') return false;
+      const r = passesCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SO | ${ff.watch} | ${ff.district} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
+      return r.pass;
+    });
+  }
+  // ─── Phase 6: SSO anywhere callback ───
+  else if (phase === 'sso-callback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 6: Senior Station Officer Callback (anywhere) ━━━` });
+    candidates = allFirefighters.filter(ff => {
+      if (!preCheck(ff, 'P6')) return false;
+      if (ff.rank !== 'SSO') return false;
+      const r = passesCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SSO | ${ff.watch} | ${ff.district} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
+      return r.pass;
+    });
+  }
+  // ─── Phase 7: SO anywhere non-callback ───
+  else if (phase === 'so-noncallback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 7: Station Officer Non-Callback (anywhere) ━━━` });
+    candidates = allFirefighters.filter(ff => {
+      if (!preCheck(ff, 'P7')) return false;
+      if (ff.rank !== 'SO') return false;
+      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SO | ${ff.watch} | ${ff.district} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
+      return r.pass;
+    });
+  }
+  // ─── Phase 8: SSO anywhere non-callback ───
+  else if (phase === 'sso-noncallback') {
+    traceLog.push({ type: 'header', message: `━━━ Phase 8: Senior Station Officer Non-Callback (anywhere) ━━━` });
+    candidates = allFirefighters.filter(ff => {
+      if (!preCheck(ff, 'P8')) return false;
+      if (ff.rank !== 'SSO') return false;
+      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
+      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SSO | ${ff.watch} | ${ff.district} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
+      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
       return r.pass;
     });
   }
 
   const distances: Record<number, number> = {};
   for (const ff of candidates) distances[ff.id] = getDistance(ff.station_id, request.station_id, distanceMatrix);
-  const thresholds = computeMustMightWonThreshold(candidates, slotsRemaining, distances);
 
-  return { phase, candidates, distances, thresholds, traceLog };
+  // Use relevant OT count for threshold calculation
+  const isCallbackPhase = phase.includes('callback') && !phase.includes('noncallback');
+  // Override total_ot_count with relevant counter for sorting
+  const adjustedCandidates = candidates.map(ff => ({
+    ...ff,
+    total_ot_count: getRelevantOTCount(ff, isCallbackPhase, request.shift_type),
+  }));
+  const thresholds = computeMustMightWonThreshold(adjustedCandidates, slotsRemaining, distances);
+
+  return { phase, candidates: adjustedCandidates, distances, thresholds, traceLog };
 }
 
 // ============================================================
@@ -448,7 +509,7 @@ async function assignFromPool(pool: CascadePool, results: AllocationResult[], as
     const assignmentId = assignmentRes.rows[0].id;
 
     // Track callback vs non-callback OT separately
-    const isCallbackPhase = pool.phase === 'callback';
+    const isCallbackPhase = pool.phase.includes('callback') && !pool.phase.includes('noncallback');
 
     if (request.shift_type === 'Day') {
       await dbExecute(`UPDATE firefighters SET ot_count_days = ot_count_days + 1 WHERE id = $1`, [ff.id]);
@@ -522,43 +583,23 @@ export async function allocateForOTRequest(request: OTRequest, allFirefighters: 
   }
 
   const allTraces: CascadePool[] = [];
+  const phases: CascadePhase[] = [
+    'ff-callback',       // Phase 1: In-district FF callback
+    'ff-noncallback',    // Phase 2: In-district FF non-callback
+    'ood-ff-callback',   // Phase 3: OOD FF callback (nearest)
+    'ood-ff-noncallback',// Phase 4: OOD FF non-callback (nearest)
+    'so-callback',       // Phase 5: SO anywhere callback
+    'sso-callback',      // Phase 6: SSO anywhere callback
+    'so-noncallback',    // Phase 7: SO anywhere non-callback
+    'sso-noncallback',   // Phase 8: SSO anywhere non-callback
+  ];
 
-  // Phase 1: Callback
-  const p1 = buildCascadePool('callback', request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
-  const r1 = await assignFromPool(p1, results, assignedThisRun, request, slotsToFill);
-  allTraces.push(p1);
-  slotsToFill -= r1.count;
-
-  // Phase 2: Non-callback Waitemata
-  if (slotsToFill > 0) {
-    const p2 = buildCascadePool('non-callback', request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
-    const r2 = await assignFromPool(p2, results, assignedThisRun, request, slotsToFill);
-    allTraces.push(p2);
-    slotsToFill -= r2.count;
-  }
-
-  // Phase 3: Out-of-district
-  if (slotsToFill > 0) {
-    const p3 = buildCascadePool('out-of-district', request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
-    const r3 = await assignFromPool(p3, results, assignedThisRun, request, slotsToFill);
-    allTraces.push(p3);
-    slotsToFill -= r3.count;
-  }
-
-  // Phase 4: SO fallback
-  if (slotsToFill > 0) {
-    const p4 = buildCascadePool('SO', request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
-    const r4 = await assignFromPool(p4, results, assignedThisRun, request, slotsToFill);
-    allTraces.push(p4);
-    slotsToFill -= r4.count;
-  }
-
-  // Phase 5: SSO fallback
-  if (slotsToFill > 0) {
-    const p5 = buildCascadePool('SSO', request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
-    const r5 = await assignFromPool(p5, results, assignedThisRun, request, slotsToFill);
-    allTraces.push(p5);
-    slotsToFill -= r5.count;
+  for (const phase of phases) {
+    if (slotsToFill <= 0) break;
+    const pool = buildCascadePool(phase, request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
+    const result = await assignFromPool(pool, results, assignedThisRun, request, slotsToFill);
+    allTraces.push(pool);
+    slotsToFill -= result.count;
   }
 
   if (results.length > 0) {

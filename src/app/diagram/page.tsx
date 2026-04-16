@@ -86,12 +86,15 @@ const WATCH_COLORS: Record<string, { bg: string; ring: string; text: string; dot
 };
 
 const PHASE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
-  callback:           { label: 'Callback',       color: 'text-blue-400',    bg: 'bg-blue-500/10' },
-  'non-callback':     { label: 'Non-Callback',   color: 'text-green-400',   bg: 'bg-green-500/10' },
-  'out-of-district':  { label: 'Out of District', color: 'text-orange-400', bg: 'bg-orange-500/10' },
-  'specialist-steal': { label: 'Specialist Steal', color: 'text-purple-400', bg: 'bg-purple-500/10' },
-  SO:                 { label: 'SO Fallback',     color: 'text-yellow-400',  bg: 'bg-yellow-500/10' },
-  SSO:                { label: 'SSO Fallback',    color: 'text-red-400',     bg: 'bg-red-500/10' },
+  'ff-callback':        { label: 'FF Callback',     color: 'text-blue-400',    bg: 'bg-blue-500/10' },
+  'ff-noncallback':     { label: 'FF Non-CB',       color: 'text-green-400',   bg: 'bg-green-500/10' },
+  'ood-ff-callback':    { label: 'OOD FF CB',       color: 'text-cyan-400',    bg: 'bg-cyan-500/10' },
+  'ood-ff-noncallback': { label: 'OOD FF Non-CB',   color: 'text-orange-400',  bg: 'bg-orange-500/10' },
+  'so-callback':        { label: 'SO Callback',     color: 'text-yellow-400',  bg: 'bg-yellow-500/10' },
+  'sso-callback':       { label: 'SSO Callback',    color: 'text-pink-400',    bg: 'bg-pink-500/10' },
+  'so-noncallback':     { label: 'SO Non-CB',       color: 'text-amber-400',   bg: 'bg-amber-500/10' },
+  'sso-noncallback':    { label: 'SSO Non-CB',      color: 'text-red-400',     bg: 'bg-red-500/10' },
+  'specialist-steal':   { label: 'Specialist Steal', color: 'text-purple-400', bg: 'bg-purple-500/10' },
 };
 
 // ─── OT Bar (visual weight) ─────────────────────────────────────────────────
@@ -304,7 +307,7 @@ function AllocationFlowDiagram({ data }: { data: TestAPIResponse }) {
       <div>
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Cascade Flow</h3>
         <div className="flex items-stretch gap-1">
-          {['callback', 'non-callback', 'out-of-district', 'SO', 'SSO'].map((phase, pi) => {
+          {['ff-callback', 'ff-noncallback', 'ood-ff-callback', 'ood-ff-noncallback', 'so-callback', 'sso-callback', 'so-noncallback', 'sso-noncallback'].map((phase, pi) => {
             const assigned = data.allFirefightersDetail.filter(f => f.isAssigned && f.cascadePhase === phase);
             const pl = PHASE_LABELS[phase] || { label: phase, color: 'text-gray-400', bg: 'bg-gray-500/10' };
             const hasAssignments = assigned.length > 0;

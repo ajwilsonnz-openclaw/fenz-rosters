@@ -80,7 +80,7 @@ export async function buildCascadeDebugTrace(
   steps.push({ phase: 'summary', message: `━━━ OT Request: ${request.date} | ${request.shift_type} Shift | ${request.number_of_slots} slots ━━━`, badge: 'info' });
 
   // Phase definitions — same cascade order as engine
-  const phases: CascadePhase[] = ['callback', 'non-callback', 'out-of-district', 'SO', 'SSO'];
+  const phases: CascadePhase[] = ['ff-callback', 'ff-noncallback', 'ood-ff-callback', 'ood-ff-noncallback', 'so-callback', 'sso-callback', 'so-noncallback', 'sso-noncallback'];
   let slotsRemaining = request.number_of_slots;
   const assignedIds = new Set<number>();
 
@@ -248,7 +248,7 @@ function filterByPhase(
   const shift = getShift(ff.watch, otDate);
   const callback = getCallbackType(ff.watch, otDate);
 
-  if (phase === 'callback') {
+  if ((phase as string) === 'callback') {
     if (shift === 'Off' && !callback) return { pass: false, reason: 'Off, no callback' };
     if (callback === '#2a-EveningDay2' && request.shift_type === 'Day') return { pass: false, reason: '#2a excluded for Day shift' };
     if (request.shift_type === 'Day' && callback === '#3-AfterLastNight') return { pass: false, reason: '#3 is Night-only' };
@@ -259,7 +259,7 @@ function filterByPhase(
     return { pass: true, reason: 'Eligible via callback or working shift' };
   }
 
-  if (phase === 'non-callback') {
+  if ((phase as string) === 'non-callback') {
     if (callback) return { pass: false, reason: 'Already in callback pool' };
     if (ff.district !== 'Waitemata') return { pass: false, reason: `Not Waitemata (${ff.district})` };
     if (request.shift_type === 'Day' && shift === 'Day') {
@@ -273,21 +273,21 @@ function filterByPhase(
     return { pass: false, reason: `Wrong shift (${shift})` };
   }
 
-  if (phase === 'out-of-district') {
+  if ((phase as string) === 'out-of-district') {
     if (ff.district === 'Waitemata') return { pass: false, reason: 'Waitemata (check non-callback first)' };
     if (request.shift_type === 'Day' && !ff.want_to_work_day) return { pass: false, reason: 'Day shift, does not want work' };
     if (request.shift_type === 'Night' && !ff.want_to_work_night) return { pass: false, reason: 'Night shift, does not want work' };
     return { pass: true, reason: 'Out-of-district, wants work' };
   }
 
-  if (phase === 'SO') {
+  if ((phase as string) === 'SO') {
     if (ff.rank !== 'SO') return { pass: false, reason: 'Not SO rank' };
     if (request.shift_type === 'Day' && !ff.want_to_work_day) return { pass: false, reason: 'Does not want Day work' };
     if (request.shift_type === 'Night' && !ff.want_to_work_night) return { pass: false, reason: 'Does not want Night work' };
     return { pass: true, reason: 'SO rank, wants work' };
   }
 
-  if (phase === 'SSO') {
+  if ((phase as string) === 'SSO') {
     if (ff.rank !== 'SSO') return { pass: false, reason: 'Not SSO rank' };
     if (request.shift_type === 'Day' && !ff.want_to_work_day) return { pass: false, reason: 'Does not want Day work' };
     if (request.shift_type === 'Night' && !ff.want_to_work_night) return { pass: false, reason: 'Does not want Night work' };

@@ -57,8 +57,8 @@ const KNOWN_RESULT_SIMPLE = {
 //   1. Albany (2 slots, no spec) → Blue callback pool: Zoe(0km), Kate(4km), Rongo(6km), Tipene(15km)
 //      All OT=0 → sort by dist → Zoe + Kate assigned → Rongo/Tipene locked_out
 //   2. Silverdale (1 slot, prt required) → Blue CB: Rongo(no prt→skip), Tipene(no prt→skip) = 0 CB candidates
-//      → Green NC: Emma Chen(Albany→Silverdale=4km, prt✅), Sarah Mitchell(Devonport→Silverdale=19km, prt✅),
-//        Jordan Park(Silverdale=0km, NO prt→skip) → Emma assigned
+//      → Green NC FF: Sarah Mitchell(Devonport→Silverdale=19km, prt✅), Jordan Park(Silverdale=0km, NO prt→skip)
+//        Emma Chen is SO rank, excluded from FF phases → Sarah assigned
 //   3. Takapuna (1 slot, no spec) → Blue CB: Rongo(Takapuna=0km), Tipene(Devonport=4km)
 //      → Rongo assigned
 const KNOWN_RESULT_COMPLEX = {
@@ -72,13 +72,16 @@ const KNOWN_RESULT_COMPLEX = {
     { stationName: 'Takapuna', slots: 1, specialist: null },
   ],
   expectedAssignments: [
-    // Albany: 2 closest Blue callback
-    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'callback', reason: 'Blue CB, Albany→Albany 0km' },
-    { name: 'Kate Sullivan', station: 'Albany', watch: 'Blue', phase: 'callback', reason: 'Blue CB, Silverdale→Albany 4km' },
-    // Silverdale: prt required, Blue CB exhausted of prt-qualified, falls to Green NC
-    { name: 'Emma Chen', station: 'Silverdale', watch: 'Green', phase: 'non-callback', reason: 'Green NC, Albany→Silverdale 4km, has prt' },
-    // Takapuna: remaining Blue CB
-    { name: 'Rongo Parata', station: 'Takapuna', watch: 'Blue', phase: 'callback', reason: 'Blue CB, Takapuna→Takapuna 0km' },
+    // Albany: 2 closest Blue callback FF
+    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB, Albany→Albany 0km' },
+    { name: 'Kate Sullivan', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB, Silverdale→Albany 4km' },
+    // Silverdale: prt required, Blue CB FFs (Rongo, Tipene) lack prt
+    // Falls to Phase 2: In-district FF non-callback with prt
+    // Sarah Mitchell (QFF, Devonport, prt✅, 19km) is the only Waitemata FF with prt
+    { name: 'Sarah Mitchell', station: 'Silverdale', watch: 'Green', phase: 'ff-noncallback', reason: 'Green NC FF, Devonport→Silverdale 19km, has prt' },
+    // Takapuna: remaining Blue CB FFs — Rongo is SO (excluded from FF phases)
+    // Tipene Rata (QFF, Devonport, 4km to Takapuna) is the remaining Blue FF
+    { name: 'Tipene Rata', station: 'Takapuna', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Devonport→Takapuna 4km' },
   ],
 };
 
@@ -425,8 +428,9 @@ export async function POST(request: NextRequest) {
 
     // Sort: Assigned first → Eligible unassigned → Ineligible
     const PHASE_PRIORITY: Record<string, number> = {
-      callback: 1, 'non-callback': 2, 'out-of-district': 3,
-      'specialist-steal': 3, SO: 4, SSO: 5, unassigned: 98, locked_out: 99,
+      'ff-callback': 1, 'ff-noncallback': 2, 'ood-ff-callback': 3, 'ood-ff-noncallback': 4,
+      'so-callback': 5, 'sso-callback': 6, 'so-noncallback': 7, 'sso-noncallback': 8,
+      'specialist-steal': 9, unassigned: 98, locked_out: 99,
     };
 
     allFirefightersDetail.sort((a, b) => {

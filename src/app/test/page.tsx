@@ -127,12 +127,15 @@ const WATCH_COLORS: Record<string, { bg: string; text: string; border: string }>
 };
 
 const PHASE_COLORS: Record<string, { bg: string; text: string }> = {
-  callback:           { bg: 'bg-blue-500/15',    text: 'text-blue-400' },
-  'non-callback':     { bg: 'bg-green-500/15',   text: 'text-green-400' },
-  'out-of-district':  { bg: 'bg-orange-500/15',  text: 'text-orange-400' },
-  'specialist-steal': { bg: 'bg-purple-500/15',  text: 'text-purple-400' },
-  SO:                 { bg: 'bg-yellow-500/15',  text: 'text-yellow-400' },
-  SSO:                { bg: 'bg-red-500/15',     text: 'text-red-400' },
+  'ff-callback':        { bg: 'bg-blue-500/15',    text: 'text-blue-400' },
+  'ff-noncallback':     { bg: 'bg-green-500/15',   text: 'text-green-400' },
+  'ood-ff-callback':    { bg: 'bg-cyan-500/15',    text: 'text-cyan-400' },
+  'ood-ff-noncallback': { bg: 'bg-orange-500/15',  text: 'text-orange-400' },
+  'so-callback':        { bg: 'bg-yellow-500/15',  text: 'text-yellow-400' },
+  'sso-callback':       { bg: 'bg-pink-500/15',    text: 'text-pink-400' },
+  'so-noncallback':     { bg: 'bg-amber-500/15',   text: 'text-amber-400' },
+  'sso-noncallback':    { bg: 'bg-red-500/15',     text: 'text-red-400' },
+  'specialist-steal':   { bg: 'bg-purple-500/15',  text: 'text-purple-400' },
 };
 
 // ─── Badge Components ───────────────────────────────────────────────────────
