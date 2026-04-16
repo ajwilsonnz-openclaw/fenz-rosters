@@ -114,6 +114,7 @@ interface StationResult {
   stationId: number;
   slots: number;
   specialist: string | null;
+  traceLogs?: any[];
   assignedFirefighters: {
     name: string; id: number; watch: string; rank: string;
     threshold: string; distance: number; homeStation: string;
@@ -242,6 +243,12 @@ export async function POST(request: NextRequest) {
         request, allFirefighters, distanceMatrix, assignedIds
       );
 
+      // DEBUG: collect trace logs
+      const traceLogs: any[] = [];
+      for (const t of allTraces) {
+        traceLogs.push({ phase: t.phase, logs: t.traceLog });
+      }
+
       for (const r of results) assignedIds.add(r.firefighter_id);
       totalAssigned += results.length;
       allTraces.forEach(t => allPhases.add(t.phase));
@@ -251,6 +258,7 @@ export async function POST(request: NextRequest) {
         stationId: station.stationId,
         slots: station.slots,
         specialist: station.specialist,
+        traceLogs,
         assignedFirefighters: results.map(r => {
           const ff = allFirefighters.find(f => f.id === r.firefighter_id);
           return {

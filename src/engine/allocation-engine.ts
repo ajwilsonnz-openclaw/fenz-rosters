@@ -116,7 +116,7 @@ async function dbExecute(text: string, params?: any[]) {
 
 export async function loadAllFirefighters(): Promise<Firefighter[]> {
   const { rows } = await dbExecute(`
-    SELECT f.*, s.name as station_name, s.district, s.area_id, a.name as area_name
+    SELECT f.*, s.name as station_name, s.area_id, a.name as district
     FROM firefighters f
     LEFT JOIN stations s ON f.station_id = s.id
     LEFT JOIN areas a ON s.area_id = a.id
@@ -139,9 +139,10 @@ export async function loadAllFirefighters(): Promise<Firefighter[]> {
 
 export async function loadPendingOTRequests(): Promise<OTRequest[]> {
   const { rows } = await dbExecute(`
-    SELECT otr.*, s.name as station_name, s.district as station_district, s.area_id
+    SELECT otr.*, s.name as station_name, s.area_id, a.name as station_district
     FROM ot_requests otr
     LEFT JOIN stations s ON otr.station_id = s.id
+    LEFT JOIN areas a ON s.area_id = a.id
     WHERE otr.status = 'pending' AND otr.number_filled < otr.number_of_slots
     ORDER BY otr.date ASC, otr.id ASC
   `);
