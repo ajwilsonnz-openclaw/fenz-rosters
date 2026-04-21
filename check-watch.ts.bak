@@ -1,0 +1,13 @@
+process.env.DATABASE_URL = 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot';
+import { getShift, getShiftStatus, getCallbackType, ANCHORS, isOnLeave } from './src/engine/watch-math';
+
+const date = new Date('2026-04-10T00:00:00');
+console.log('Anchors:', ANCHORS);
+const watches = ['Blue', 'Green', 'Red', 'Yellow'] as const;
+for (const watch of watches) {
+  const shift = getShift(watch, date);
+  const status = getShiftStatus(watch, date);
+  const cb = getCallbackType(watch, date);
+  const onLeave = isOnLeave(watch, date);
+  console.log(`${watch}: shift=${shift} status=${JSON.stringify(status)} cb=${cb} onLeave=${onLeave}`);
+}

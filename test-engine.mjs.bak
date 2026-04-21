@@ -1,0 +1,83 @@
+// Direct test — uses the allocation engine directly (bypasses Next.js)
+import pg from 'pg';
+const { Pool } = pg;
+
+process.env.DATABASE_URL = 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot';
+process.env.DIRECT_URL = 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot';
+
+async function test() {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
+
+  console.log('🔄 Resetting DB...');
+  await pool.query(`SET session_replication_role = replica`);
+  await pool.query(`
+    TRUNCATE ot_count_log, audit_logs, ot_assignments, ot_offers, ot_requests,
+    availability, allocation_runs, district_relievers, station_distances,
+    watch_anchors, firefighters, stations, areas, system_settings
+    RESTART IDENTITY CASCADE
+  `);
+  await pool.query(`SET session_replication_role = DEFAULT`);
+  console.log('✅ DB reset');
+
+  console.log('🌱 Seeding...');
+  const { seedDatabase } = await import('./src/lib/seed.ts');
+  await seedDatabase();
+  console.log('✅ Seeded');
+
+  console.log('📊 Loading allocation engine...');
+  const { loadAllFirefighters, loadDistanceMatrix, allocateForOTRequest } = await import('./src/engine/allocation-engine.ts');
+  const { query } = await import('./src/lib/db.ts');
+
+  // Load data
+  const allFirefighters = await loadAllFirefighters();
+  const distanceMatrix = await loadDistanceMatrix();
+
+  // Verify Zoe Fletcher is in the dataset
+  const zoe = allFirefighters.find(f => f.first_name === 'Zoe' && f.last_name === 'Fletcher');
+  if (!zoe) {
+    console.error('❌ Zoe Fletcher not found in firefighters');
+    console.log('Sample FFs:', allFirefighters.slice(0, 3).map(f => `${f.first_name} ${f.last_name}`));
+    process.exit(1);
+  }
+  console.log(`✅ Zoe Fletcher found: station=${zoe.stationName}, cbD=${zoe.ot_count_callback_days}`);
+
+  // Use engine's own loading to get properly-formed OTRequest objects
+  await pool.query(`
+    INSERT INTO ot_requests (station_id, date, shift_type, number_of_slots, status, created_at)
+    SELECT s.id, '2026-04-10', 'Day', 2, 'pending', NOW()
+    FROM stations s WHERE s.name = 'Albany'
+  `);
+  
+  const requests = await (async () => {
+    const { loadPendingOTRequests } = await import('./src/engine/allocation-engine.ts');
+    return loadPendingOTRequests();
+  })();
+  
+  if (!requests.length) {
+    console.error('No pending OT requests found!');
+    process.exit(1);
+  }
+  
+  const request = requests.find(r => r.station_name === 'Albany') || requests[0];
+  console.log(`Loaded OT request: id=${request.id}, station=${request.station_name}, slots=${request.number_of_slots}, date=${request.date}`);
+
+  // Run allocation
+  const assignedThisRun = new Set();
+  const { results } = await allocateForOTRequest(request, allFirefighters, distanceMatrix, assignedThisRun);
+
+  console.log(`\n📋 ${results.length} FFs assigned to Albany Day OT:`);
+  for (const r of results) {
+    console.log(`  ${r.name} | watch=${r.watch} | phase=${r.phase} | dist=${r.distance_km}km | cbD=${r.ot_count_callback_days}`);
+  }
+
+  console.log('\nExpected: Zoe Fletcher (0km) + Marama Te Awa (19km)');
+  const hasZoe = results.some(r => r.name === 'Zoe Fletcher');
+  const hasMarama = results.some(r => r.name === 'Marama Te Awa');
+  console.log(`✅ Zoe Fletcher: ${hasZoe}`);
+  console.log(`✅ Marama Te Awa: ${hasMarama}`);
+
+  await pool.end();
+  process.exit(hasZoe && hasMarama ? 0 : 1);
+}
+
+test().catch(e => { console.error('FAILED:', e.message, e.stack?.split('\n')[1]); process.exit(1); });

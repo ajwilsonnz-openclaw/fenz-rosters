@@ -1,49 +1,103 @@
-# FENZ OT — Critical Bug Fixes
+# FENZ OT — Implementation Notes
 
-## Bugs to fix:
+> **Refer to [SPEC.md](./SPEC.md) for the authoritative design.**
+> This file tracks implementation-level decisions and patterns.
 
-### 1. OOD/SO/SSO cascade phases ignore watch eligibility (CRITICAL)
-Currently, `buildCascadePool` only checks watch math for `callback` and `non-callback` phases. The `out-of-district`, `SO`, and `SSO` phases don't check if the firefighter's watch is eligible for OT on this date/shift.
+---
 
-**Evidence:** Priya Sharma (Red, #3-AfterLastNight = night-only callback) was assigned to Silverdale Day shift via `out-of-district`. Dan Reid & Grace Whittaker (Brown, #2a-EveningDay2 = excludes Day) were assigned to Takapuna Day.
+## Allocation Engine Architecture
 
-**Fix:** Add a `canDoOT(ff, otDate, requestShiftType)` helper that encapsulates ALL watch-eligibility logic (leave check, callback exclusion, shift mismatch). Use it in ALL five cascade phases, not just callback/non-callback.
+The engine processes all stations simultaneously within each distance phase. Key design patterns:
 
-### 2. OT counters need separate callback/non-callback tracking
-Currently only `ot_count_days` and `ot_count_nights` exist. Callback OT and non-callback OT should be tracked separately because they count against different callback limits.
+### 1. Cascade Pool Building
 
-**Fix:** Add `ot_count_callback_days`, `ot_count_callback_nights`, `ot_count_noncallback_days`, `ot_count_noncallback_nights` to the DB (as new columns). Update the `assignFromPool` function to increment the correct counter based on `pool.phase`.
+For each (Block, distance phase) combination, `buildCascadePool()` collects candidates with:
+- Watch eligibility check (`canDoOT()`)
+- Block-specific filter (callback or non-callback)
+- Qualification + preference checks
+- Excludes already-assigned firefighters
 
-### 3. Dashboard: Show qualifications + OOD counters + sort by priority
-- Firefighter roster needs to show `qualifications` (as badge tags)
-- Show both callback and non-callback OT counters separately (e.g., "3d/1n CB | 5d/2n NC")
-- Sort the roster: assigned first, sorted by cascade phase priority (callback → non-callback → OOD → SO → SSO), then within each phase by OT count ascending
+### 2. Must/Might Threshold
 
-## Files to modify:
-1. `src/engine/allocation-engine.ts` — Add `canDoOT` guard to all phases, update counter incrementing
-2. `src/app/api/test/route.ts` — Update API response to include quals + separate counters + sorted roster
-3. `src/app/dashboard/page.tsx` — Update UI to show quals + separate counters
-4. DB migration — Add new counter columns if needed
+`computeMustMightWonThreshold()` runs after pool building. It sorts candidates by OT count, groups by count, then assigns thresholds:
+- Groups where `cumulative + group_size <= slots` → all "must"
+- Groups where `slots - cumulative < group_size` → partial "must" / "might" split
+- Remaining groups → "won't"
 
-## DB columns to add (via migration):
-```sql
-ALTER TABLE firefighters 
-  ADD COLUMN IF NOT EXISTS ot_count_callback_days INT DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS ot_count_callback_nights INT DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS ot_count_noncallback_days INT DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS ot_count_noncallback_nights INT DEFAULT 0;
-```
+Within tied groups, candidates are sorted by distance before threshold assignment.
 
-## `canDoOT` spec:
+### 3. OT Counter Selection
+
+Passed through the cascade phase name:
+- `ff-callback`, `ood-ff-callback`, `so-callback`, `sso-callback` → `ot_count_callback_[day/night]`
+- `ff-noncallback`, `ood-ff-noncallback`, `so-noncallback`, `sso-noncallback` → `ot_count_noncallback_[day/night]`
+
+### 4. Specialist Steal
+
+Runs after Block 2. `stealForSpecialists()` iterates specialist stations, finds nearest qualified donor from non-specialist stations with ≥1 spare, and reassigns. Records STOLEN/LOST in both station trace logs.
+
+---
+
+## Database Patterns
+
+### JSONB Usage
+
+- `qualifications`: `{"prt": true, "driver": true, "not_rookie": true}`
+- `preferences`: `{"districts": ["Waitemata"], "stations": ["Albany"]}`
+- `distances`: `{"stationB_id": km, ...}`
+
+Parse with:
 ```typescript
-function canDoOT(ff: Firefighter, otDate: Date, requestShiftType: ShiftType): { pass: boolean; reason: string } {
-  // 1. On leave → false
-  // 2. #3-AfterLastNight on Day shift → false (night only)
-  // 3. #2a-EveningDay2 on Day shift → false (excludes Day)  
-  // 4. #2b-DayOfNight1 on Day shift → false (night only)
-  // 5. callback + regular working shift mismatch → false
-  // 6. Otherwise true (wants_to_work flags checked separately by each phase)
-}
+typeof r.qualifications === 'string' ? JSON.parse(r.qualifications) : r.qualifications || {}
 ```
 
-This is essentially a superset of the logic already in `passesCallbackFilter` and `passesNonCallbackFilter` — extract the common eligibility check and use it universally.
+### Distance Matrix
+
+Loaded once per allocation run via `loadDistanceMatrix()`. Returns `{[fromStationId]: {[toStationId]: km}}`. Use `getDistance(from, to, matrix)` helper — returns 0 if same station, `?? 999` if no entry.
+
+### FK-Safe DELETE Order (for tests)
+
+When truncating all tables before reseeding:
+```
+ot_count_log → audit_logs → ot_offers → availability → district_relievers
+→ ot_assignments → ot_requests → allocation_runs → station_distances
+→ system_settings → watch_anchors → areas → firefighters → stations
+```
+
+Children tables before parent tables. `SET session_replication_role = replica` to bypass constraints during DELETE.
+
+---
+
+## Watch Math Notes
+
+- `getShift(watch, date)` returns: `'Day' | 'Night' | 'Off'`
+- `getCallbackType(watch, date)` returns: `#1-BeforeDay1` | `#2a-EveningDay2` | `#2b-DayOfNight1` | `#3-AfterLastNight` | `null`
+- `getShiftStatus(watch, date)` returns: `'Day' | 'Night' | 'Off' | 'On Leave'`
+
+Leave is computed from a 160-day super-cycle (first 16 days = leave).
+
+---
+
+## Testing Patterns
+
+Use the test dashboard (`/test`) for visual regression testing. For scripted tests:
+```bash
+# Run a specific scenario
+curl -X POST http://localhost:3005/api/test \
+  -H "Content-Type: application/json" \
+  -d '{"scenario": "known-result-complex"}'
+
+# Reset before each test run
+curl -X POST http://localhost:3005/api/test \
+  -H "Content-Type: application/json" \
+  -d '{"action": "reset_ot_counts"}'
+```
+
+---
+
+## Open Implementation Items
+
+- [ ] Rebuild allocation engine to new Block→Distance architecture per SPEC.md
+- [ ] Add `preferences` column to `firefighters` table
+- [ ] Verify SO/SSO preference filtering in allocation engine
+- [ ] Ensure specialist fill applies to officer roles as well as FFs

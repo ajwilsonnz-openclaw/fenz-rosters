@@ -1,678 +1,407 @@
-// FENZ Overtime Allocation Engine — Full Spec Implementation
-//
-// CASCADING ALLOCATION — FIREFIGHTER OT (8 phases):
-// Phase 1: In-district FF callback
-// Phase 2: In-district FF non-callback
-// Phase 3: Nearest out-of-district FF callback
-// Phase 4: Nearest out-of-district FF non-callback
-// Phase 5: SO anywhere callback
-// Phase 6: SSO anywhere callback
-// Phase 7: SO anywhere non-callback
-// Phase 8: SSO anywhere non-callback
-//
-// FF ranks: FF, QFF, SFF (phases 1-4)
-// Officer ranks: SO (phases 5,7), SSO (phases 6,8)
-//
-// OT counters per firefighter: callback_days, callback_nights, noncallback_days, noncallback_nights
-// Sort within each phase: threshold → lowest relevant OT count → nearest distance
-
 import { Pool } from 'pg';
-import { getShift, getCallbackType, getShiftStatus } from './watch-math';
+import { getShift, getCallbackType, isOnLeave } from './watch-math';
+import { getPool } from '../lib/db';
 
-// ============================================================
-// Types
-// ============================================================
-
-export type Watch = 'Green' | 'Red' | 'Brown' | 'Blue' | 'Yellow';
-export type ShiftType = 'Day' | 'Night';
-export type Rank = 'FF' | 'QFF' | 'SFF' | 'SO' | 'SSO';
-export type MustMightWont = 'must' | 'might' | 'locked_out' | 'won_t';
-export type CallbackType = '#1-BeforeDay1' | '#2a-EveningDay2' | '#2b-DayOfNight1' | '#3-AfterLastNight' | null;
-export type CascadePhase = 'ff-callback' | 'ff-noncallback' | 'ood-ff-callback' | 'ood-ff-noncallback' | 'so-callback' | 'sso-callback' | 'so-noncallback' | 'sso-noncallback';
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface Firefighter {
-  id: number;
-  first_name: string;
-  last_name: string;
-  email: string;
-  station_id: number;
-  station_name: string;
-  district: string | null;
-  area_id: number;
-  area_name: string;
-  watch: Watch;
-  rank: Rank;
-  ot_count_days: number;
-  ot_count_nights: number;
-  ot_count_callback_days: number;
-  ot_count_callback_nights: number;
-  ot_count_noncallback_days: number;
-  ot_count_noncallback_nights: number;
-  qualifications: Record<string, boolean>;
+  id: number; first_name: string; last_name: string; station_id: number;
+  station_name: string; district: string; area_id: number; watch: string;
+  rank: 'FF' | 'QFF' | 'SFF' | 'SO' | 'SSO';
+  qualifications: Record<string, boolean>; preferences: { districts: string[]; stations: string[] };
+  want_to_work_day: boolean; want_to_work_night: boolean;
+  ot_count_days: number; ot_count_nights: number;
+  ot_count_callback_days: number; ot_count_callback_nights: number;
+  ot_count_noncallback_days: number; ot_count_noncallback_nights: number;
   is_active: boolean;
-  want_to_work_day: boolean;
-  want_to_work_night: boolean;
-  total_ot_count: number;
 }
 
 export interface OTRequest {
-  id: number;
-  station_id: number;
-  station_name: string;
-  station_district: string | null;
-  area_id: number;
-  date: string;
-  shift_type: ShiftType;
-  specialist_type: string | null;
-  required_qualification_ids: string[];
-  status: string;
-  number_of_slots: number;
-  number_filled: number;
+  station_id: number; station_name: string; district: string;
+  date: string; shift_type: 'Day' | 'Night'; slots: number; specialist_type: string | null;
 }
 
-export interface DistanceMatrix {
-  [fromStationId: number]: { [toStationId: number]: number };
+export interface DistanceMatrix { [fromStationId: number]: { [toStationId: number]: number }; }
+
+export interface Assignment {
+  firefighter_id: number; firefighter_name: string; rank: string;
+  home_station: string; distance: number; cascadePhase: string;
+  otCount: number; threshold: 'must' | 'might' | 'wont';
+  callback: string | null; qualifications: string[]; assignedAtBlock: number;
+  assignedStation: string;
 }
 
 export interface AllocationResult {
-  ot_request_id: number;
-  assignment_id: number;
-  firefighter_id: number;
-  firefighter_name: string;
-  watch: string;
-  rank: string;
-  distance_km: number;
-  callback_type: CallbackType;
-  must_might_wont: MustMightWont;
-  hours_allocated: number;
-  cascade_phase: CascadePhase;
+  station_name: string; station_id: number; slots: number;
+  specialist: string | null; assignedFirefighters: Assignment[]; phasesUsed: string[];
 }
 
-export interface AllocationRunSummary {
-  run_id: number;
-  started_at: string;
-  completed_at: string;
-  total_assigned: number;
-  total_unfilled: number;
-  results: AllocationResult[];
-  specialistPulls: number;
+export interface TraceEntry {
+  type: 'header' | 'info' | 'debug' | 'assign' | 'skip' | 'lost'; message: string; detail?: string;
 }
 
-// ============================================================
-// Database Helpers
-// ============================================================
+// ─── Block Definitions ────────────────────────────────────────────────────────
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: false,
-});
+interface BlockDef {
+  id: number; phase: string;
+  rankFilter: 'FF' | 'SO' | 'SSO' | 'FF+SO' | 'FF+SSO' | 'SO+SSO';
+  inDistrict: boolean | 'any'; isCallback: boolean;
+  otCounter: 'callback' | 'noncallback'; note: string;
+}
 
-async function dbExecute(text: string, params?: any[]) {
-  try {
-    const result = await pool.query(text, params);
-    return result;
-  } catch (e: any) {
-    console.error('dbExecute FAILED:', e.message);
-    console.error('  SQL:', text.substring(0, 200));
-    console.error('  Params:', params);
-    throw e;
+const BLOCKS: BlockDef[] = [
+  { id:1, phase:'ff-callback',       rankFilter:'FF',    inDistrict:true,  isCallback:true,  otCounter:'callback',    note:'In-district FF callback' },
+  { id:2, phase:'ff-noncallback',    rankFilter:'FF',    inDistrict:true,  isCallback:false, otCounter:'noncallback', note:'In-district FF non-callback' },
+  { id:3, phase:'ood-ff-callback',   rankFilter:'FF',    inDistrict:'any', isCallback:true,  otCounter:'callback',    note:'Out-of-district FF callback' },
+  { id:4, phase:'ood-ff-noncallback',rankFilter:'FF',    inDistrict:'any', isCallback:false, otCounter:'noncallback', note:'Out-of-district FF non-callback' },
+  { id:5, phase:'so-callback',       rankFilter:'FF+SO', inDistrict:'any', isCallback:true,  otCounter:'callback',    note:'SO callback (all districts)' },
+  { id:6, phase:'sso-callback',      rankFilter:'SO+SSO',inDistrict:'any', isCallback:true,  otCounter:'callback',    note:'SSO callback (all districts)' },
+  { id:7, phase:'so-noncallback',    rankFilter:'FF+SO', inDistrict:'any', isCallback:false, otCounter:'noncallback', note:'SO non-callback (all districts)' },
+  { id:8, phase:'sso-noncallback',   rankFilter:'SO+SSO',inDistrict:'any', isCallback:false, otCounter:'noncallback', note:'SSO non-callback (all districts)' },
+];
+
+function getRank(ff: Firefighter): 'FF' | 'SO' | 'SSO' {
+  if (ff.rank === 'SO') return 'SO';
+  if (ff.rank === 'SSO') return 'SSO';
+  return 'FF';
+}
+
+function rankMatchesFilter(rank: 'FF' | 'SO' | 'SSO', filter: BlockDef['rankFilter']): boolean {
+  switch (filter) {
+    case 'FF':    return rank === 'FF';
+    case 'SO':    return rank === 'SO';
+    case 'SSO':   return rank === 'SSO';
+    case 'FF+SO': return rank === 'FF' || rank === 'SO';
+    case 'FF+SSO':return rank === 'FF' || rank === 'SSO';
+    case 'SO+SSO':return rank === 'SO' || rank === 'SSO';
   }
 }
 
-// ============================================================
-// Data Loading
-// ============================================================
-
-export async function loadAllFirefighters(): Promise<Firefighter[]> {
-  const { rows } = await dbExecute(`
-    SELECT f.*, s.name as station_name, s.area_id, a.name as district
-    FROM firefighters f
-    LEFT JOIN stations s ON f.station_id = s.id
-    LEFT JOIN areas a ON s.area_id = a.id
-    WHERE f.is_active = true
-  `);
-  return rows.map((r: any) => ({
-    ...r,
-    total_ot_count: (r.ot_count_days || 0) + (r.ot_count_nights || 0),
-    qualifications: typeof r.qualifications === 'string' ? JSON.parse(r.qualifications) : r.qualifications || {},
-    want_to_work_day: r.want_to_work_day !== false,
-    want_to_work_night: r.want_to_work_night !== false,
-    ot_count_callback_days: r.ot_count_callback_days || 0,
-    ot_count_callback_nights: r.ot_count_callback_nights || 0,
-    ot_count_noncallback_days: r.ot_count_noncallback_days || 0,
-    ot_count_noncallback_nights: r.ot_count_noncallback_nights || 0,
-    ot_count_days: r.ot_count_days || 0,
-    ot_count_nights: r.ot_count_nights || 0,
-  }));
+function getOTCount(ff: Firefighter, counter: 'callback' | 'noncallback', shiftType: 'Day' | 'Night'): number {
+  if (counter === 'callback') return shiftType === 'Day' ? ff.ot_count_callback_days : ff.ot_count_callback_nights;
+  return shiftType === 'Day' ? ff.ot_count_noncallback_days : ff.ot_count_noncallback_nights;
 }
 
-export async function loadPendingOTRequests(): Promise<OTRequest[]> {
-  const { rows } = await dbExecute(`
-    SELECT otr.*, s.name as station_name, s.area_id, a.name as station_district
-    FROM ot_requests otr
-    LEFT JOIN stations s ON otr.station_id = s.id
-    LEFT JOIN areas a ON s.area_id = a.id
-    WHERE otr.status = 'pending' AND otr.number_filled < otr.number_of_slots
-    ORDER BY otr.date ASC, otr.id ASC
-  `);
-  return rows.map((r: any) => ({
-    ...r,
-    required_qualification_ids: typeof r.required_qualification_ids === 'string'
-      ? JSON.parse(r.required_qualification_ids) : r.required_qualification_ids || [],
-  }));
+export function getShiftForWatch(watch: string, dateStr: string): 'Day' | 'Night' | 'Off' {
+  return getShift(watch as any, new Date(dateStr));
 }
 
-export async function loadDistanceMatrix(): Promise<DistanceMatrix> {
-  const { rows } = await dbExecute(`SELECT station_id, other_station_id, distance_km FROM station_distances`);
-  const matrix: DistanceMatrix = {};
-  for (const r of rows) {
-    if (!matrix[r.station_id]) matrix[r.station_id] = {};
-    matrix[r.station_id][r.other_station_id] = r.distance_km;
+export function getCallbackForWatch(watch: string, dateStr: string): string | null {
+  return getCallbackType(watch as any, new Date(dateStr));
+}
+
+export function canDoOT(ff: Firefighter, dateStr: string, shiftType: 'Day' | 'Night'): { pass: boolean; reason: string } {
+  const shift = getShiftForWatch(ff.watch, dateStr);
+  if (shift === 'Off' && isOnLeave(ff.watch as any, new Date(dateStr))) return { pass: false, reason: 'On Leave' };
+  const cb = getCallbackForWatch(ff.watch, dateStr);
+  if (cb === '#3-AfterLastNight' && shiftType === 'Day') return { pass: false, reason: 'Between Nights Day OT excluded' };
+  if (cb === '#2a-EveningDay2'    && shiftType === 'Day') return { pass: false, reason: '#2a EveningDay2 excludes Day' };
+  if (cb === '#2b-DayOfNight1'    && shiftType === 'Day') return { pass: false, reason: '#2b DayOfNight1 excludes Day' };
+  if (shift !== 'Off' && cb === null) {
+    if (shiftType === 'Day'   && shift === 'Night') return { pass: false, reason: 'On Night shift' };
+    if (shiftType === 'Night' && shift === 'Day')    return { pass: false, reason: 'On Day shift' };
   }
-  return matrix;
+  return { pass: true, reason: 'Watch-eligible' };
+}
+
+function checkQualifications(ff: Firefighter, quals: string[]): boolean {
+  if (!quals || quals.length === 0) return true;
+  for (const q of quals) { if (!ff.qualifications[q]) return false; }
+  return true;
+}
+
+function checkPreferences(ff: Firefighter, otStationName: string, otDistrict: string): boolean {
+  const { districts, stations } = ff.preferences;
+  if ((!districts?.length) && (!stations?.length)) return true;
+  if (stations?.length > 0) return stations.includes(otStationName);
+  if (districts?.length > 0) return districts.includes(otDistrict);
+  return true;
 }
 
 export function getDistance(fromStationId: number, toStationId: number, matrix: DistanceMatrix): number {
   if (fromStationId === toStationId) return 0;
-  return matrix[fromStationId]?.[toStationId] ?? 999;
+  const from = matrix[fromStationId];
+  if (!from) return 999;
+  return from[toStationId] ?? 999;
 }
 
-// ============================================================
-// Qualification Checking
-// ============================================================
-
-export function checkQualifications(ff: Firefighter, requiredQualIds: string[], specialistType: string | null): boolean {
-  for (const req of requiredQualIds) {
-    if (!ff.qualifications[req]) return false;
-  }
-  if (specialistType && !ff.qualifications[specialistType]) return false;
-  return true;
-}
-
-// ============================================================
-// UNIVERSAL Watch Eligibility Guard (applies to ALL phases)
-// ============================================================
-
-export function canDoOT(ff: Firefighter, otDate: Date, requestShiftType: ShiftType): { pass: boolean; reason: string } {
-  const shiftInfo = getShiftStatus(ff.watch, otDate);
-  if (shiftInfo.includes('On Leave')) return { pass: false, reason: 'On Leave' };
-
-  const shift = getShift(ff.watch, otDate);
-  const callback = getCallbackType(ff.watch, otDate);
-
-  // Callback exclusions (apply regardless of phase)
-  if (callback === '#2a-EveningDay2' && requestShiftType === 'Day') return { pass: false, reason: '#2a-EveningDay2 excludes Day' };
-  if (callback === '#3-AfterLastNight' && requestShiftType === 'Day') return { pass: false, reason: '#3-AfterLastNight is Night-only' };
-  if (callback === '#2b-DayOfNight1' && requestShiftType === 'Day') return { pass: false, reason: '#2b-DayOfNight1 is Night-only' };
-
-  // Regular working shift mismatch (not callback, but on a working shift opposite to requested)
-  if (!callback && shift !== 'Off') {
-    if (requestShiftType === 'Day' && shift === 'Night') return { pass: false, reason: 'Night shift (no callback)' };
-    if (requestShiftType === 'Night' && shift === 'Day') return { pass: false, reason: 'Day shift (no callback)' };
-  }
-  // Off-duty with no callback = eligible for non-callback OT (completely free)
-
-  return { pass: true, reason: 'Watch-eligible' };
-}
-
-// ============================================================
-// Must / Might / Won't Threshold Calculation
-// ============================================================
-
-export function computeMustMightWonThreshold(candidates: Firefighter[], availableSlots: number, distances?: Record<number, number>): Map<number, MustMightWont> {
-  const result = new Map<number, MustMightWont>();
-  if (candidates.length === 0) return result;
-
-  const sorted = [...candidates].sort((a, b) => a.total_ot_count - b.total_ot_count);
-  const groups = new Map<number, Firefighter[]>();
-  for (const ff of sorted) {
-    if (!groups.has(ff.total_ot_count)) groups.set(ff.total_ot_count, []);
-    groups.get(ff.total_ot_count)!.push(ff);
-  }
-
-  let cumulative = 0;
-  let allRemainingAreWonT = false;
-
-  for (const [, group] of groups) {
-    if (allRemainingAreWonT) {
-      for (const ff of group) result.set(ff.id, 'won_t');
-      continue;
-    }
-    // Sort within group by distance when available (closest first)
-    if (distances) {
-      group.sort((a, b) => (distances[a.id] ?? 999) - (distances[b.id] ?? 999));
-    }
-    const newCumulative = cumulative + group.length;
-    if (newCumulative <= availableSlots) {
-      for (const ff of group) result.set(ff.id, 'must');
-      cumulative = newCumulative;
-    } else {
-      const slotsRemaining = availableSlots - cumulative;
-      for (let i = 0; i < group.length; i++) {
-        if (i < slotsRemaining) result.set(group[i].id, 'might');
-        else result.set(group[i].id, 'locked_out');
-      }
-      cumulative = availableSlots;
-      allRemainingAreWonT = true;
-    }
+/**
+ * Threshold: candidates sorted by OT count.
+ * The first `slots` candidates get 'must'.
+ * Any remaining slots (up to len-slots) get 'might'.
+ * Beyond that: 'wont'.
+ *
+ * lowerPriorityAssigned: seats already taken by higher blocks — reduces
+ * the effective slot pool for this block's threshold calculation.
+ */
+export function computeMustMightWonThreshold(
+  candidates: { ff: Firefighter; distance: number; otCount: number }[],
+  slots: number,
+  lowerPriorityAssigned: number = 0,
+): Map<number, 'must' | 'might' | 'wont'> {
+  const result = new Map<number, 'must' | 'might' | 'wont'>();
+  if (candidates.length === 0 || slots <= 0) return result;
+  const sorted = [...candidates].sort((a, b) => {
+    if (a.otCount !== b.otCount) return a.otCount - b.otCount;
+    return a.distance - b.distance;
+  });
+  const effectiveSlots = Math.max(0, slots - lowerPriorityAssigned);
+  const mustCount = effectiveSlots > 0 ? Math.min(effectiveSlots, sorted.length) : 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const threshold: 'must' | 'might' | 'wont' =
+      i < mustCount ? 'must' :
+      i - mustCount < Math.max(0, slots - lowerPriorityAssigned - mustCount) ? 'might' :
+      'wont';
+    result.set(sorted[i].ff.id, threshold);
   }
   return result;
 }
 
-// ============================================================
-// Phase 1: Callback filter
-// ============================================================
+// ─── Data Loading ─────────────────────────────────────────────────────────────
 
-function passesCallbackFilter(ff: Firefighter, otDate: Date, requestShiftType: ShiftType): { pass: boolean; reason: string } {
-  const shiftInfo = getShiftStatus(ff.watch, otDate);
-  if (shiftInfo.includes('On Leave')) return { pass: false, reason: 'On Leave' };
-
-  const shift = getShift(ff.watch, otDate);
-  const callback = getCallbackType(ff.watch, otDate);
-
-  if (shift === 'Off' && !callback) return { pass: false, reason: 'Off, no callback' };
-  if (callback === '#2a-EveningDay2' && requestShiftType === 'Day') return { pass: false, reason: '#2a excluded for Day shift' };
-  if (requestShiftType === 'Day' && callback === '#3-AfterLastNight') return { pass: false, reason: '#3 is Night-only' };
-  if (requestShiftType === 'Day' && callback === '#2b-DayOfNight1') return { pass: false, reason: '#2b is Night-only' };
-  if (requestShiftType === 'Day' && shift === 'Night') return { pass: false, reason: 'Night shift, not Day' };
-  if (requestShiftType === 'Night' && shift === 'Day' && !callback) return { pass: false, reason: 'Day shift, not Night' };
-  if (!callback && shift !== 'Off') return { pass: false, reason: 'Regular working shift, no callback' };
-
-  return { pass: true, reason: 'Eligible via callback or working shift' };
-}
-
-// ============================================================
-// Phase 2: Non-callback filter (Waitemata only, working shift, wants OT)
-// ============================================================
-
-function passesNonCallbackFilter(ff: Firefighter, otDate: Date, requestShiftType: ShiftType): { pass: boolean; reason: string } {
-  const shiftInfo = getShiftStatus(ff.watch, otDate);
-  if (shiftInfo.includes('On Leave')) return { pass: false, reason: 'On Leave' };
-
-  const shift = getShift(ff.watch, otDate);
-  const callback = getCallbackType(ff.watch, otDate);
-
-  if (callback) return { pass: false, reason: 'Already in callback pool' };
-
-  if (requestShiftType === 'Day' && shift === 'Day') {
-    if (ff.want_to_work_day) return { pass: true, reason: 'Day shift, wants to work' };
-    return { pass: false, reason: "Doesn't want Day work" };
-  }
-  if (requestShiftType === 'Night' && shift === 'Night') {
-    if (ff.want_to_work_night) return { pass: true, reason: 'Night shift, wants to work' };
-    return { pass: false, reason: "Doesn't want Night work" };
-  }
-  if (shift === 'Off') return { pass: true, reason: 'Off duty, available for OT' };
-  return { pass: false, reason: `${shift} shift, need ${requestShiftType}` };
-}
-
-// ============================================================
-// Phase 4/5: Rank-based filter (SO/SSO any watch, any shift)
-// ============================================================
-
-function passesRankFilter(ff: Firefighter, otDate: Date, requestShiftType: ShiftType, requiredRank: Rank): { pass: boolean; reason: string } {
-  // Universal watch eligibility — prevents Red/Brown from getting Day OT when excluded
-  const watchCheck = canDoOT(ff, otDate, requestShiftType);
-  if (!watchCheck.pass) return { pass: false, reason: watchCheck.reason };
-  if (ff.rank !== requiredRank) return { pass: false, reason: `Rank ${ff.rank}, need ${requiredRank}` };
-  if (requestShiftType === 'Day' && !ff.want_to_work_day) return { pass: false, reason: "Doesn't want Day work" };
-  if (requestShiftType === 'Night' && !ff.want_to_work_night) return { pass: false, reason: "Doesn't want Night work" };
-  return { pass: true, reason: `${ff.rank} rank, wants ${requestShiftType} work` };
-}
-
-// ============================================================
-// Cascade Pool Builder
-// ============================================================
-
-interface CascadePool {
-  phase: CascadePhase;
-  candidates: Firefighter[];
-  distances: Record<number, number>;
-  thresholds: Map<number, MustMightWont>;
-  traceLog: TraceEntry[];
-}
-
-interface TraceEntry {
-  type: 'header' | 'pass' | 'skip' | 'assign';
-  message: string;
-  detail?: string;
-}
-
-const FF_RANKS = new Set(['FF', 'QFF', 'SFF']);
-
-function isFFRank(rank: string): boolean { return FF_RANKS.has(rank); }
-
-function getRelevantOTCount(ff: Firefighter, isCallback: boolean, shiftType: ShiftType): number {
-  if (isCallback) return shiftType === 'Day' ? ff.ot_count_callback_days : ff.ot_count_callback_nights;
-  return shiftType === 'Day' ? ff.ot_count_noncallback_days : ff.ot_count_noncallback_nights;
-}
-
-function buildCascadePool(phase: CascadePhase, request: OTRequest, otDate: Date, allFirefighters: Firefighter[], assignedThisRun: Set<number>, distanceMatrix: DistanceMatrix, slotsRemaining: number): CascadePool {
-  const traceLog: TraceEntry[] = [];
-  let candidates: Firefighter[] = [];
-  const reqDistrict = request.station_district || 'Waitemata';
-
-  // Helper: common pre-checks
-  function preCheck(ff: Firefighter, label: string): boolean {
-    if (assignedThisRun.has(ff.id)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Already assigned' }); return false; }
-    if (!checkQualifications(ff, request.required_qualification_ids, request.specialist_type)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: 'Missing qualifications' }); return false; }
-    return true;
-  }
-
-  // ─── Phase 1: In-district FF callback ───
-  if (phase === 'ff-callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 1: In-District FF Callback (${reqDistrict}) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P1')) return false;
-      if (!isFFRank(ff.rank)) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.rank} (officer, skip)` }); return false; }
-      if (ff.district !== reqDistrict) { traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.district} (not ${reqDistrict})` }); return false; }
-      const r = passesCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | cb=${getCallbackType(ff.watch, otDate)} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 2: In-district FF non-callback ───
-  else if (phase === 'ff-noncallback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 2: In-District FF Non-Callback (${reqDistrict}) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P2')) return false;
-      if (!isFFRank(ff.rank)) return false;
-      if (ff.district !== reqDistrict) return false;
-      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.station_name} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 3: Nearest OOD FF callback ───
-  else if (phase === 'ood-ff-callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 3: Out-of-District FF Callback (nearest) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P3')) return false;
-      if (!isFFRank(ff.rank)) return false;
-      if (ff.district === reqDistrict) return false; // must be OOD
-      const r = passesCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.district} | ${ff.station_name} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 4: Nearest OOD FF non-callback ───
-  else if (phase === 'ood-ff-noncallback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 4: Out-of-District FF Non-Callback (nearest) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P4')) return false;
-      if (!isFFRank(ff.rank)) return false;
-      if (ff.district === reqDistrict) return false;
-      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${ff.district} | ${ff.station_name} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name} (${ff.watch})`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 5: SO anywhere callback ───
-  else if (phase === 'so-callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 5: Station Officer Callback (anywhere) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P5')) return false;
-      if (ff.rank !== 'SO') return false;
-      const r = passesCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SO | ${ff.watch} | ${ff.district} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 6: SSO anywhere callback ───
-  else if (phase === 'sso-callback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 6: Senior Station Officer Callback (anywhere) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P6')) return false;
-      if (ff.rank !== 'SSO') return false;
-      const r = passesCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SSO | ${ff.watch} | ${ff.district} | CB_OT=${getRelevantOTCount(ff, true, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 7: SO anywhere non-callback ───
-  else if (phase === 'so-noncallback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 7: Station Officer Non-Callback (anywhere) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P7')) return false;
-      if (ff.rank !== 'SO') return false;
-      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SO | ${ff.watch} | ${ff.district} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
-      return r.pass;
-    });
-  }
-  // ─── Phase 8: SSO anywhere non-callback ───
-  else if (phase === 'sso-noncallback') {
-    traceLog.push({ type: 'header', message: `━━━ Phase 8: Senior Station Officer Non-Callback (anywhere) ━━━` });
-    candidates = allFirefighters.filter(ff => {
-      if (!preCheck(ff, 'P8')) return false;
-      if (ff.rank !== 'SSO') return false;
-      const r = passesNonCallbackFilter(ff, otDate, request.shift_type);
-      if (r.pass) traceLog.push({ type: 'pass', message: `${ff.first_name} ${ff.last_name}`, detail: `SSO | ${ff.watch} | ${ff.district} | NC_OT=${getRelevantOTCount(ff, false, request.shift_type)}` });
-      else traceLog.push({ type: 'skip', message: `${ff.first_name} ${ff.last_name}`, detail: r.reason });
-      return r.pass;
-    });
-  }
-
-  const distances: Record<number, number> = {};
-  for (const ff of candidates) distances[ff.id] = getDistance(ff.station_id, request.station_id, distanceMatrix);
-
-  // Use relevant OT count for threshold calculation
-  const isCallbackPhase = phase.includes('callback') && !phase.includes('noncallback');
-  // Override total_ot_count with relevant counter for sorting
-  const adjustedCandidates = candidates.map(ff => ({
-    ...ff,
-    total_ot_count: getRelevantOTCount(ff, isCallbackPhase, request.shift_type),
-  }));
-  const thresholds = computeMustMightWonThreshold(adjustedCandidates, slotsRemaining, distances);
-
-  return { phase, candidates: adjustedCandidates, distances, thresholds, traceLog };
-}
-
-// ============================================================
-// Assign from a cascade pool
-// ============================================================
-
-const thresholdOrder: Record<MustMightWont, number> = { must: 0, might: 1, locked_out: 2, won_t: 3 };
-
-async function assignFromPool(pool: CascadePool, results: AllocationResult[], assignedThisRun: Set<number>, request: OTRequest, slotsToFill: number): Promise<{ count: number }> {
-  const sorted = [...pool.candidates].sort((a, b) => {
-    const aT = pool.thresholds.get(a.id) || 'won_t';
-    const bT = pool.thresholds.get(b.id) || 'won_t';
-    if (thresholdOrder[aT] !== thresholdOrder[bT]) return thresholdOrder[aT] - thresholdOrder[bT];
-    if (a.total_ot_count !== b.total_ot_count) return a.total_ot_count - b.total_ot_count;
-    return (pool.distances[a.id] ?? 999) - (pool.distances[b.id] ?? 999);
+export async function loadAllFirefighters(pool: Pool): Promise<Firefighter[]> {
+  const rows = await pool.query<Record<string, unknown>>(
+    `SELECT ff.id, ff.first_name, ff.last_name, ff.station_id, s.name AS station_name,
+            s.area_id, a.name AS district, ff.watch, ff.rank, ff.qualifications,
+            ff.preferences, ff.want_to_work_day, ff.want_to_work_night,
+            ff.ot_count_days, ff.ot_count_nights,
+            ff.ot_count_callback_days, ff.ot_count_callback_nights,
+            ff.ot_count_noncallback_days, ff.ot_count_noncallback_nights,
+            ff.is_active
+     FROM firefighters ff
+     JOIN stations s ON ff.station_id = s.id
+     JOIN areas a ON s.area_id = a.id
+     WHERE ff.is_active = true
+     ORDER BY a.name, s.name, ff.last_name, ff.first_name`
+  );
+  return rows.rows.map(row => {
+    const r = row as Record<string, unknown>;
+    return {
+      id:Number(r.id), first_name:String(r.first_name), last_name:String(r.last_name),
+      station_id:Number(r.station_id), station_name:String(r.station_name),
+      district:String(r.district), area_id:Number(r.area_id),
+      watch:String(r.watch), rank:r.rank as Firefighter['rank'],
+      qualifications:typeof r.qualifications==='string'?JSON.parse(r.qualifications):(r.qualifications||{}),
+      preferences:typeof r.preferences==='string'?JSON.parse(r.preferences):(r.preferences||{districts:[],stations:[]}),
+      want_to_work_day:Boolean(r.want_to_work_day), want_to_work_night:Boolean(r.want_to_work_night),
+      ot_count_days:Number(r.ot_count_days), ot_count_nights:Number(r.ot_count_nights),
+      ot_count_callback_days:Number(r.ot_count_callback_days), ot_count_callback_nights:Number(r.ot_count_callback_nights),
+      ot_count_noncallback_days:Number(r.ot_count_noncallback_days), ot_count_noncallback_nights:Number(r.ot_count_noncallback_nights),
+      is_active:Boolean(r.is_active),
+    } as Firefighter;
   });
+}
 
-  let filled = 0;
-  for (const ff of sorted) {
-    if (filled >= slotsToFill) break;
-    const threshold = pool.thresholds.get(ff.id) || 'won_t';
-    if (threshold === 'won_t' || threshold === 'locked_out') continue;
+export async function loadDistanceMatrix(pool: Pool): Promise<DistanceMatrix> {
+  const rows = await pool.query<{ station_id: number; distances: Record<string, number> }>(
+    `SELECT station_id, distances FROM station_distances`
+  );
+  const matrix: DistanceMatrix = {};
+  for (const row of rows.rows) {
+    const distObj: Record<number, number> = {};
+    for (const [k, v] of Object.entries(row.distances)) distObj[Number(k)] = Number(v);
+    matrix[row.station_id] = distObj;
+  }
+  return matrix;
+}
 
-    const hours = request.shift_type === 'Day' ? 10 : 14;
-    const callback = getCallbackType(ff.watch, new Date(request.date));
+// ─────────────────────────────────────────────────────────────────────────────
+// Core Allocation Engine v2 — Group/Global assignment per distance phase
+//
+// Key difference from v1:
+//   - Candidates are collected for ALL stations at once (not per-station)
+//   - Sorted by OT count globally
+//   - Assigned in order: each FF takes their nearest AVAILABLE station
+//     within their eligible set
+//   - This enables cross-station coordination: a FF can "spill over"
+//     to a distant station if their nearest is full, freeing up their
+//     nearest for a higher-priority candidate
+// ─────────────────────────────────────────────────────────────────────────────
 
-    pool.traceLog.push({ type: 'assign', message: `ASSIGNED: ${ff.first_name} ${ff.last_name}`, detail: `${ff.watch} | ${pool.phase} | threshold=${threshold} | distance=${pool.distances[ff.id]}km | OT=${ff.total_ot_count}` });
+export async function allocateForOTRequest(
+  requests: OTRequest[],
+  allFirefighters: Firefighter[],
+  distanceMatrix: DistanceMatrix,
+  existingAssigned: Set<number> = new Set(),
+): Promise<AllocationResult[]> {
+  // Map station_id → request for quick lookup
+  const requestByStation = new Map<number, OTRequest>();
+  for (const req of requests) requestByStation.set(req.station_id, req);
 
-    const assignmentRes = await dbExecute(
-      `INSERT INTO ot_assignments (ot_request_id, firefighter_id, status, distance_km, callback_type, must_might_wont, hours_allocated, assigned_at)
-       VALUES ($1, $2, 'assigned', $3, CAST($4 AS varchar), $5, $6, NOW()) RETURNING id`,
-      [request.id, ff.id, pool.distances[ff.id] ?? 0, callback || 'none', threshold, hours],
-    );
-    const assignmentId = assignmentRes.rows[0].id;
+  // Track slots remaining per station
+  const slotsRemaining: Record<number, number> = {};
+  for (const req of requests) slotsRemaining[req.station_id] = req.slots;
 
-    // Track callback vs non-callback OT separately
-    const isCallbackPhase = pool.phase.includes('callback') && !pool.phase.includes('noncallback');
+  // Global assignment set: once an FF is assigned, they can't be reassigned
+  const globalAssigned = new Set<number>(existingAssigned);
 
-    if (request.shift_type === 'Day') {
-      await dbExecute(`UPDATE firefighters SET ot_count_days = ot_count_days + 1 WHERE id = $1`, [ff.id]);
-      if (isCallbackPhase) {
-        await dbExecute(`UPDATE firefighters SET ot_count_callback_days = ot_count_callback_days + 1 WHERE id = $1`, [ff.id]);
-      } else {
-        await dbExecute(`UPDATE firefighters SET ot_count_noncallback_days = ot_count_noncallback_days + 1 WHERE id = $1`, [ff.id]);
+  // Per-station results
+  const results: Map<number, AllocationResult> = new Map();
+  for (const req of requests) {
+    results.set(req.station_id, {
+      station_name: req.station_name, station_id: req.station_id,
+      slots: req.slots, specialist: req.specialist_type,
+      assignedFirefighters: [], phasesUsed: [],
+    });
+  }
+
+  // Determine max distance
+  let maxDistance = 0;
+  for (const from of Object.values(distanceMatrix)) {
+    for (const km of Object.values(from)) {
+      if (Number(km) > maxDistance) maxDistance = Number(km);
+    }
+  }
+
+  // ── Per distance phase: collect ALL candidates across ALL stations
+for (let dist = 0; dist <= maxDistance; dist++) {
+  // Collect candidates at this distance for each (block, station) pair
+  const candidatesByBlock = new Map<number, { ff: Firefighter; req: OTRequest; distance: number; otCount: number }[]>();
+
+  for (const block of BLOCKS) {
+    candidatesByBlock.set(block.id, []);
+    for (const req of requests) {
+      if (slotsRemaining[req.station_id] <= 0) continue;
+      for (const ff of allFirefighters) {
+        if (globalAssigned.has(ff.id)) continue;
+        const shift = getShiftForWatch(ff.watch as any, req.date);
+        const watchCb = getCallbackForWatch(ff.watch as any, req.date);
+        if (block.isCallback) { if (!watchCb) continue; }
+        else { if (watchCb) continue; }
+        const eligible = canDoOT(ff, req.date, req.shift_type);
+        if (!eligible.pass) continue;
+        if (!rankMatchesFilter(getRank(ff), block.rankFilter)) continue;
+        if (block.inDistrict === true && ff.district !== req.district) continue;
+        const distKm = getDistance(ff.station_id, req.station_id, distanceMatrix);
+        if (distKm !== dist) continue;
+        // OOD blocks must exclude in-district FFs (inDistrict===true filter handles
+        // in-district blocks; OOD blocks use inDistrict:any but still need this check)
+        if (block.inDistrict === 'any' && ff.district === req.district) continue;
+        const requiredQuals = req.specialist_type ? [req.specialist_type] : [];
+        if (!checkQualifications(ff, requiredQuals)) continue;
+        if (!checkPreferences(ff, req.station_name, req.district)) continue;
+        if (!block.isCallback && shift !== 'Off') {
+          const wantField = req.shift_type === 'Day' ? ff.want_to_work_day : ff.want_to_work_night;
+          if (!wantField) continue;
+        }
+        candidatesByBlock.get(block.id)!.push({ ff, req, distance: distKm, otCount: getOTCount(ff, block.otCounter, req.shift_type) });
       }
-      await dbExecute(`INSERT INTO ot_count_log (firefighter_id, counter_type, old_value, new_value, change_reason, related_ot_request_id) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [ff.id, isCallbackPhase ? 'callback_days' : 'noncallback_days',
-         ff.ot_count_days, ff.ot_count_days + 1,
-         `OT allocation: ${threshold} (${pool.phase})`, request.id]);
-    } else {
-      await dbExecute(`UPDATE firefighters SET ot_count_nights = ot_count_nights + 1 WHERE id = $1`, [ff.id]);
-      if (isCallbackPhase) {
-        await dbExecute(`UPDATE firefighters SET ot_count_callback_nights = ot_count_callback_nights + 1 WHERE id = $1`, [ff.id]);
-      } else {
-        await dbExecute(`UPDATE firefighters SET ot_count_noncallback_nights = ot_count_noncallback_nights + 1 WHERE id = $1`, [ff.id]);
-      }
-      await dbExecute(`INSERT INTO ot_count_log (firefighter_id, counter_type, old_value, new_value, change_reason, related_ot_request_id) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [ff.id, isCallbackPhase ? 'callback_nights' : 'noncallback_nights',
-         ff.ot_count_nights, ff.ot_count_nights + 1,
-         `OT allocation: ${threshold} (${pool.phase})`, request.id]);
+    }
+  }
+
+  // DEBUG: log distance phase summary
+    let totalAssignedThisDist = 0;
+    for (const req of requests) totalAssignedThisDist += (req.slots - slotsRemaining[req.station_id]);
+    console.log(`DIST=${dist}: total assigned so far=${totalAssignedThisDist}`);
+  // DEBUG: log distance phase summary
+  // Check if ANY block has candidates at this distance
+  let anyCandidateAtThisDist = false;
+  for (const cands of Array.from(candidatesByBlock.values())) {
+    if (cands.length > 0) { anyCandidateAtThisDist = true; break; }
+  }
+  if (!anyCandidateAtThisDist) continue;
+
+  // Per-station threshold: each station independently decides must/might/wont
+  // Rule: only "must" candidates fill slots. "might" wait for next distance.
+  // Every evaluated candidate (must or might) is consumed globally.
+  for (const block of BLOCKS) {
+    const candidates = candidatesByBlock.get(block.id)!;
+    if (candidates.length === 0) continue;
+
+    // Slots taken by higher-priority blocks at each station
+    const slotsTakenByHigher = new Map<number, number>();
+    for (const req of requests) {
+      const result = results.get(req.station_id)!;
+      slotsTakenByHigher.set(req.station_id, req.slots - slotsRemaining[req.station_id]);
     }
 
-    await dbExecute(`INSERT INTO audit_logs (action, entity_type, entity_id, old_value, new_value, reason) VALUES ($1, $2, $3, $4, $5, $6)`,
-      ['ot_assignment', 'ot_request', request.id,
-        JSON.stringify({ ff: ff.id, cascade_phase: pool.phase }),
-        JSON.stringify({ counter_after: ff.ot_count_days + ff.ot_count_nights + 1 }),
-        `${ff.first_name} ${ff.last_name} assigned to ${request.shift_type} OT via ${pool.phase}`]);
+    // Group candidates by target station for per-station threshold
+    const byStation = new Map<number, typeof candidates>();
+    for (const c of candidates) {
+      if (!byStation.has(c.req.station_id)) byStation.set(c.req.station_id, []);
+      byStation.get(c.req.station_id)!.push(c);
+    }
 
-    results.push({
-      ot_request_id: request.id,
-      assignment_id: assignmentId,
-      firefighter_id: ff.id,
-      firefighter_name: `${ff.first_name} ${ff.last_name}`,
-      watch: ff.watch, rank: ff.rank,
-      distance_km: pool.distances[ff.id] ?? 0,
-      callback_type: callback,
-      must_might_wont: threshold,
-      hours_allocated: hours,
-      cascade_phase: pool.phase,
-    });
+    // Assign station-by-station: only "must" fills; "might" waits next distance
+    for (const [stationId, stationCands] of Array.from(byStation)) {
+      const req = requests.find(r => r.station_id === stationId)!;
 
-    assignedThisRun.add(ff.id);
-    filled++;
+      // Station full: mark ALL candidates as globally consumed
+      if (slotsRemaining[stationId] <= 0) {
+        for (const c of stationCands) globalAssigned.add(c.ff.id);
+        continue;
+      }
+
+      const higherTaken = slotsTakenByHigher.get(stationId) ?? 0;
+
+      // Threshold scoped to REMAINING slots (not req.slots) to prevent over-filling
+      const threshold = computeMustMightWonThreshold(
+        stationCands.map(c => ({ ff: c.ff, distance: c.distance, otCount: c.otCount })),
+        slotsRemaining[stationId],
+        higherTaken,
+      );
+
+      // Sort: must first (lowest OT), then might, then distance
+      stationCands.sort((a, b) => {
+        const ta = threshold.get(a.ff.id)!;
+        const tb = threshold.get(b.ff.id)!;
+        if (ta !== tb) {
+          if (ta === 'must') return -1;
+          if (tb === 'must') return 1;
+          return ta === 'might' ? -1 : 1;
+        }
+        if (a.otCount !== b.otCount) return a.otCount - b.otCount;
+        return a.distance - b.distance;
+      });
+
+      // Only "must" fills slots. "might" waits next distance.
+      // Every evaluated candidate (must or might) is consumed globally.
+      for (const c of stationCands) {
+        const t = threshold.get(c.ff.id)!;
+        if (t === 'wont') {
+          // Below threshold - skip but do NOT consume globally; lower OT at same
+          // distance still valid at next distance phase
+          continue;
+        }
+        // Evaluated (must or might) - consume globally
+        globalAssigned.add(c.ff.id);
+
+        if (t === 'must' && slotsRemaining[stationId] > 0) {
+          slotsRemaining[stationId]--;
+          const assignment: Assignment = {
+            firefighter_id: c.ff.id,
+            firefighter_name: `${c.ff.first_name} ${c.ff.last_name}`,
+            rank: c.ff.rank,
+            home_station: c.ff.station_name,
+            distance: c.distance,
+            cascadePhase: block.phase,
+            otCount: c.otCount,
+            threshold: t,
+            callback: getCallbackForWatch(c.ff.watch as any, c.req.date),
+            qualifications: Object.keys(c.ff.qualifications).filter(k => c.ff.qualifications[k]),
+            assignedAtBlock: block.id,
+            assignedStation: c.req.station_name,
+          };
+          const stationResult = results.get(stationId)!;
+          stationResult.assignedFirefighters.push(assignment);
+          if (!stationResult.phasesUsed.includes(block.phase)) stationResult.phasesUsed.push(block.phase);
+        }
+      }
+    }
   }
 
-  pool.traceLog.push({ type: 'header', message: `${filled} assigned from ${pool.phase} (${slotsToFill - filled} remaining)` });
-  return { count: filled };
+}
+return Array.from(results.values());
 }
 
-// ============================================================
-// Core Allocation — Cascading
-// ============================================================
 
-export async function allocateForOTRequest(request: OTRequest, allFirefighters: Firefighter[], distanceMatrix: DistanceMatrix, assignedThisRun: Set<number>): Promise<{ results: AllocationResult[]; allTraces: CascadePool[] }> {
-  const results: AllocationResult[] = [];
-  let slotsToFill = request.number_of_slots - request.number_filled;
-  if (slotsToFill <= 0) return { results, allTraces: [] };
-
-  const rawDate = request.date as unknown;
-  let otDate: Date;
-  if (typeof rawDate === 'string') {
-    const [y, mo, d] = rawDate.split('-').map(Number);
-    otDate = new Date(Date.UTC(y, mo - 1, d));
-  } else if (rawDate instanceof Date) {
-    otDate = new Date(Date.UTC(rawDate.getUTCFullYear(), rawDate.getUTCMonth(), rawDate.getUTCDate()));
-  } else {
-    return { results, allTraces: [] };
-  }
-
-  const allTraces: CascadePool[] = [];
-  const phases: CascadePhase[] = [
-    'ff-callback',       // Phase 1: In-district FF callback
-    'ff-noncallback',    // Phase 2: In-district FF non-callback
-    'ood-ff-callback',   // Phase 3: OOD FF callback (nearest)
-    'ood-ff-noncallback',// Phase 4: OOD FF non-callback (nearest)
-    'so-callback',       // Phase 5: SO anywhere callback
-    'sso-callback',      // Phase 6: SSO anywhere callback
-    'so-noncallback',    // Phase 7: SO anywhere non-callback
-    'sso-noncallback',   // Phase 8: SSO anywhere non-callback
-  ];
-
-  for (const phase of phases) {
-    if (slotsToFill <= 0) break;
-    const pool = buildCascadePool(phase, request, otDate, allFirefighters, assignedThisRun, distanceMatrix, slotsToFill);
-    const result = await assignFromPool(pool, results, assignedThisRun, request, slotsToFill);
-    allTraces.push(pool);
-    slotsToFill -= result.count;
-  }
-
-  if (results.length > 0) {
-    await dbExecute(`UPDATE ot_requests SET number_filled = $1, status = CASE WHEN $1::int >= $2::int THEN 'filled' ELSE status END WHERE id = $3`,
-      [results.length, request.number_of_slots, request.id]);
-  }
-
-  return { results, allTraces };
+export async function runAllocation(
+  requests: OTRequest[], pool: Pool,
+): Promise<{ stationResults: AllocationResult[]; traces: Record<string, TraceEntry[]> }> {
+  const [allFFs, distMatrix] = await Promise.all([
+    loadAllFirefighters(pool), loadDistanceMatrix(pool),
+  ]);
+  const stationResults = await allocateForOTRequest(requests, allFFs, distMatrix, new Set());
+  return { stationResults, traces: {} };
 }
 
-// ============================================================
-// Specialist Station Enforcement
-// ============================================================
-
-export async function checkAndFillSpecialistStations(allFirefighters: Firefighter[], distanceMatrix: DistanceMatrix, assignedThisRun: Set<number>): Promise<AllocationResult[]> {
-  const pulls: AllocationResult[] = [];
-  const { rows: specStations } = await dbExecute(`SELECT id, name, specialist_type FROM stations WHERE is_specialist = true`);
-
-  for (const station of specStations) {
-    const { rows: uncovered } = await dbExecute(`SELECT * FROM ot_requests WHERE station_id = $1 AND status = 'pending' AND number_filled < number_of_slots LIMIT 1`, [station.id]);
-    if (uncovered.length === 0) continue;
-
-    const qualifiedAnywhere = allFirefighters.filter(ff => !assignedThisRun.has(ff.id) && checkQualifications(ff, [], station.specialist_type));
-    if (qualifiedAnywhere.length === 0) continue;
-
-    const sorted = qualifiedAnywhere.sort((a, b) => {
-      if (a.total_ot_count !== b.total_ot_count) return a.total_ot_count - b.total_ot_count;
-      return (distanceMatrix[a.station_id]?.[station.id] ?? 999) - (distanceMatrix[b.station_id]?.[station.id] ?? 999);
-    });
-
-    const pulled = sorted[0];
-    if (!pulled) continue;
-
-    const request = uncovered[0];
-    const { results } = await allocateForOTRequest(request, allFirefighters, distanceMatrix, assignedThisRun);
-    pulls.push(...results);
-  }
-
-  return pulls;
-}
-
-// ============================================================
-// Full Allocation Run — Orchestrator
-// ============================================================
-
-export async function runFullAllocation(): Promise<AllocationRunSummary> {
-  const runRes = await dbExecute(`INSERT INTO allocation_runs (run_at, status, description) VALUES (NOW(), 'running', 'Full allocation run') RETURNING id`);
-  const runId = runRes.rows[0].id;
-  const startedAt = new Date().toISOString();
-
-  const allFirefighters = await loadAllFirefighters();
-  const distanceMatrix = await loadDistanceMatrix();
-  const pendingRequests = await loadPendingOTRequests();
-
-  const assignedThisRun = new Set<number>();
-  const allResults: AllocationResult[] = [];
-  let specialistPulls = 0;
-
-  for (const request of pendingRequests) {
-    const { results } = await allocateForOTRequest(request, allFirefighters, distanceMatrix, assignedThisRun);
-    allResults.push(...results);
-  }
-
-  const pulls = await checkAndFillSpecialistStations(allFirefighters, distanceMatrix, assignedThisRun);
-  specialistPulls = pulls.length;
-  allResults.push(...pulls);
-
-  const completedAt = new Date().toISOString();
-  const filled = allResults.length;
-  const unfilled = pendingRequests.reduce((sum, r) => sum + (r.number_of_slots - r.number_filled), 0) - filled;
-
-  await dbExecute(`UPDATE allocation_runs SET status = 'completed', total_allocated = $1, total_unfilled = $2, duration_ms = $3 WHERE id = $4`,
-    [filled, Math.max(0, unfilled), Date.now() - new Date(startedAt).getTime(), runId]);
-
-  return { run_id: runId, started_at: startedAt, completed_at: completedAt, total_assigned: filled, total_unfilled: Math.max(0, unfilled), results: allResults, specialistPulls };
-}

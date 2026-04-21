@@ -1,0 +1,105 @@
+// Standalone allocation test - bypasses Next.js entirely
+import pg from 'pg';
+const { Pool } = pg;
+
+const pool = new Pool({
+  connectionString: 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot',
+  ssl: false,
+});
+
+async function main() {
+  // 1. Reseed (truncate + reload)
+  console.log('🌱 Seeding...');
+  await pool.query("SET session_replication_role = replica");
+  await pool.query(`
+    TRUNCATE ot_count_log, audit_logs, ot_offers, availability, district_relievers,
+    ot_assignments, ot_requests, allocation_runs, firefighters, stations, areas,
+    system_settings, watch_anchors, station_distances RESTART IDENTITY CASCADE
+  `);
+  await pool.query("SET session_replication_role = DEFAULT");
+
+  // Run the seed inline (import the function via tsx)
+  const { seedDatabase } = await import('./src/lib/seed.ts').catch(() => {
+    // Fallback: load the sql from seed.ts manually
+    return { seedDatabase: null };
+  });
+
+  if (seedDatabase) {
+    await seedDatabase();
+  } else {
+    // Manual seed - just insert the known-result-simple scenario
+    // Albany station (station_id = resolved at runtime)
+    await pool.query(`INSERT INTO stations (name, district, watch_type, min_staffed_bays, max_bays, lat, lng) VALUES
+      ('Albany', 'Waitemata', 'Green', 1, 6, -36.7275, 174.6972),
+      ('Glen Eden', 'Waitemata', 'Green', 1, 4, -36.9292, 174.6531)
+      ON CONFLICT DO NOTHING`);
+    
+    const { rows: stations } = await pool.query("SELECT id, name FROM stations WHERE name IN ('Albany','Glen Eden')");
+    const albany = stations.find(s => s.name === 'Albany');
+    const glenEden = stations.find(s => s.name === 'Glen Eden');
+    console.log('Albany ID:', albany?.id, 'Glen Eden ID:', glenEden?.id);
+  }
+
+  // 2. Check Zoe Fletcher's station and distances
+  const ff = await pool.query(`SELECT id, first_name, last_name, station_id, watch, ot_count_callback_days FROM firefighters WHERE first_name = 'Zoe' AND last_name = 'Fletcher'`);
+  if (ff.rows.length === 0) {
+    console.log('Zoe Fletcher not found!');
+    const all = await pool.query("SELECT first_name, last_name, station_id FROM firefighters LIMIT 5");
+    console.log('Sample FFs:', all.rows);
+    process.exit(1);
+  }
+  console.log('Zoe:', ff.rows[0]);
+
+  // 3. Check station_distances for Albany (Zoe's home)
+  const dist = await pool.query(`SELECT distances FROM station_distances WHERE station_id = $1`, [ff.rows[0].station_id]);
+  if (dist.rows.length === 0) {
+    console.log('No station_distances for station_id', ff.rows[0].station_id);
+    const allD = await pool.query("SELECT station_id FROM station_distances LIMIT 3");
+    console.log('Available station_ids in station_distances:', allD.rows);
+    process.exit(1);
+  }
+  console.log('Albany distances JSON:', dist.rows[0].distances);
+
+  // 4. Run known-result-simple scenario manually
+  // Create an OT request for Albany Day shift
+  const albanyId = ff.rows[0].station_id; // Zoe's home station
+  await pool.query(`INSERT INTO ot_requests (station_id, shift_type, start_time, end_time, slots, status)
+    VALUES ($1, 'Day', NOW(), NOW() + INTERVAL '8 hours', 2, 'Open')
+    ON CONFLICT DO NOTHING`);
+  
+  const { rows: requests } = await pool.query(`SELECT id FROM ot_requests WHERE station_id = $1 ORDER BY id DESC LIMIT 1`, [albanyId]);
+  if (requests.length === 0) { console.log('No OT request created'); process.exit(1); }
+  const requestId = requests[0].id;
+
+  // 5. Call the allocation function
+  console.log('\n🚀 Running allocation for request:', requestId);
+  try {
+    const result = await pool.query(`SELECT * FROM allocate_overtimes($1)`, [requestId]);
+    console.log('Allocation result:', JSON.stringify(result.rows[0], null, 2));
+  } catch (e) {
+    console.log('PL/pgSQL error:', e.message);
+  }
+
+  // 6. Check assignments
+  const assignments = await pool.query(`
+    SELECT a.*, f.first_name, f.last_name, f.watch
+    FROM ot_assignments a
+    JOIN firefighters f ON f.id = a.firefighter_id
+    WHERE a.ot_request_id = $1
+  `, [requestId]);
+  
+  console.log(`\n📋 Assignments for Albany OT request (${assignments.rows.length}):`);
+  for (const a of assignments.rows) {
+    console.log(`  ${a.first_name} ${a.last_name} | watch=${a.watch} | dist=${a.distance_km ?? a.cascade_phase ?? '?'}`);
+  }
+  
+  // Expected: Zoe Fletcher (dist=0, home) + Marama Te Awa (dist=19, next eligible)
+  const hasZoe = assignments.rows.some(a => a.first_name === 'Zoe' && a.last_name === 'Fletcher');
+  console.log(`\n✅ Zoe Fletcher assigned: ${hasZoe}`);
+  console.log(`Expected: Zoe Fletcher (0km) + Marama Te Awa (19km)`);
+  
+  await pool.end();
+  process.exit(hasZoe ? 0 : 1);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

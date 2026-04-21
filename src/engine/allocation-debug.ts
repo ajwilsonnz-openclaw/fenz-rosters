@@ -1,8 +1,11 @@
 // Allocation Debug Trace — step-by-step logging of the cascade engine
 
 import { getShift, getCallbackType, isOnLeave, getShiftStatus } from './watch-math';
-import type { Firefighter, CascadePhase, MustMightWont, OTRequest } from './allocation-engine';
+import type { Firefighter, OTRequest } from './allocation-engine';
 import type { DistanceMatrix } from './allocation-engine';
+
+type CascadePhase = 'ff-callback' | 'ff-noncallback' | 'ood-ff-callback' | 'ood-ff-noncallback' | 'so-callback' | 'sso-callback' | 'so-noncallback' | 'sso-noncallback';
+type MustMightWont = 'must' | 'might' | 'wont';
 
 export interface TraceStep {
   phase: CascadePhase | 'filter' | 'threshold' | 'assign' | 'summary';
@@ -129,7 +132,7 @@ export async function buildCascadeDebugTrace(
       steps.push({
         phase,
         message: `${ff.first_name} ${ff.last_name}`,
-        detail: `${ff.watch} | ${ff.station_name || 'Unknown'} | shift=${getShift(ff.watch, otDate)} | cb=${getCallbackType(ff.watch, otDate) || 'none'} | OT=${ff.total_ot_count} | dist=${distance > 900 ? '???' : distance + 'km'} → ${r}`,
+        detail: `${ff.watch} | ${ff.station_name || 'Unknown'} | shift=${getShift(ff.watch as any, otDate)} | cb=${getCallbackType(ff.watch as any, otDate) || 'none'} | OT=${(ff.ot_count_days + ff.ot_count_nights)} | dist=${distance > 900 ? '???' : distance + 'km'} → ${r}`,
         badge: isEligible ? 'pass' : 'reject',
         indent: 1,
       });
@@ -143,7 +146,7 @@ export async function buildCascadeDebugTrace(
     // Compute Must/Might/Won't
     const thresholds = computeMustMightWonThreshold(eligible, slotsRemaining);
     for (const ff of eligible) {
-      const t = thresholds.get(ff.id) || 'won_t';
+      const t = thresholds.get(ff.id) || 'wont';
       const d = getDist(ff.station_id, request.station_id, distanceMatrix);
       candidates.push({
         id: ff.id,
@@ -155,9 +158,9 @@ export async function buildCascadeDebugTrace(
         rank: ff.rank,
         otDays: ff.ot_count_days,
         otNights: ff.ot_count_nights,
-        totalOt: ff.total_ot_count,
-        shift: getShift(ff.watch, otDate),
-        callback: getCallbackType(ff.watch, otDate),
+        totalOt: (ff.ot_count_days + ff.ot_count_nights),
+        shift: getShift(ff.watch as any, otDate),
+        callback: getCallbackType(ff.watch as any, otDate),
         distance: d,
         threshold: t,
         qualifications: ff.qualifications,
@@ -169,12 +172,12 @@ export async function buildCascadeDebugTrace(
     }
 
     // Sort: must → might → locked_out by threshold → OT → distance
-    const thresholdOrder: Record<string, number> = { must: 0, might: 1, locked_out: 2, won_t: 3 };
+    const thresholdOrder: Record<string, number> = { must: 0, might: 1, locked_out: 2, wont: 3 };
     const sorted = [...eligible].sort((a, b) => {
-      const at = thresholds.get(a.id) || 'won_t';
-      const bt = thresholds.get(b.id) || 'won_t';
+      const at = thresholds.get(a.id) || 'wont';
+      const bt = thresholds.get(b.id) || 'wont';
       if (thresholdOrder[at] !== thresholdOrder[bt]) return thresholdOrder[at] - thresholdOrder[bt];
-      if (a.total_ot_count !== b.total_ot_count) return a.total_ot_count - b.total_ot_count;
+      if (a.ot_count_days + a.ot_count_nights !== b.ot_count_days + b.ot_count_nights) return (a.ot_count_days + a.ot_count_nights) - (b.ot_count_days + b.ot_count_nights);
       return (getDist(a.station_id, request.station_id, distanceMatrix)) - (getDist(b.station_id, request.station_id, distanceMatrix));
     });
 
@@ -182,8 +185,8 @@ export async function buildCascadeDebugTrace(
     let assigned = 0;
     for (const ff of sorted) {
       if (assigned >= slotsRemaining) break;
-      const t = thresholds.get(ff.id) || 'won_t';
-      if (t === 'won_t' || t === 'locked_out') continue;
+      const t = thresholds.get(ff.id) || 'wont';
+      if (t === 'wont') continue;
 
       const candidate = candidates.find(c => c.id === ff.id);
       if (candidate) candidate.isAssigned = true;
@@ -191,7 +194,7 @@ export async function buildCascadeDebugTrace(
       steps.push({
         phase: 'assign',
         message: `✅ ASSIGNED: ${ff.first_name} ${ff.last_name}`,
-        detail: `${ff.watch} | threshold=${t} | OT=${ff.total_ot_count} | dist=${getDist(ff.station_id, request.station_id, distanceMatrix)}km | phase=${phase}`,
+        detail: `${ff.watch} | threshold=${t} | OT=${(ff.ot_count_days + ff.ot_count_nights)} | dist=${getDist(ff.station_id, request.station_id, distanceMatrix)}km | phase=${phase}`,
         badge: 'assign',
       });
 
@@ -207,8 +210,8 @@ export async function buildCascadeDebugTrace(
   const assignedCount = candidates.filter(c => c.isAssigned).length;
   const mustCount = candidates.filter(c => c.threshold === 'must').length;
   const mightCount = candidates.filter(c => c.threshold === 'might').length;
-  const lockedCount = candidates.filter(c => c.threshold === 'locked_out').length;
-  const wontCount = candidates.filter(c => c.threshold === 'won_t').length;
+  const lockedCount = candidates.filter(c => c.threshold === 'wont').length;
+  const wontCount = candidates.filter(c => c.threshold === 'wont').length;
 
   steps.push({
     phase: 'summary',
@@ -242,11 +245,11 @@ function filterByPhase(
   otDate: Date,
   request: { date: string; shift_type: 'Day' | 'Night' },
 ): { pass: boolean; reason: string } {
-  const shiftInfo = getShiftStatus(ff.watch, otDate);
+  const shiftInfo = getShiftStatus(ff.watch as any, otDate);
   if (shiftInfo.includes('On Leave')) return { pass: false, reason: 'On Leave' };
 
-  const shift = getShift(ff.watch, otDate);
-  const callback = getCallbackType(ff.watch, otDate);
+  const shift = getShift(ff.watch as any, otDate);
+  const callback = getCallbackType(ff.watch as any, otDate);
 
   if ((phase as string) === 'callback') {
     if (shift === 'Off' && !callback) return { pass: false, reason: 'Off, no callback' };
@@ -303,17 +306,17 @@ function computeMustMightWonThreshold(
 ): Map<number, MustMightWont> {
   const result = new Map<number, MustMightWont>();
   if (candidates.length === 0) return result;
-  const sorted = [...candidates].sort((a, b) => a.total_ot_count - b.total_ot_count);
+  const sorted = [...candidates].sort((a, b) => (a.ot_count_days + a.ot_count_nights) - (b.ot_count_days + b.ot_count_nights));
   const groups = new Map<number, Firefighter[]>();
   for (const ff of sorted) {
-    if (!groups.has(ff.total_ot_count)) groups.set(ff.total_ot_count, []);
-    groups.get(ff.total_ot_count)!.push(ff);
+    if (!groups.has((ff.ot_count_days + ff.ot_count_nights))) groups.set((ff.ot_count_days + ff.ot_count_nights), []);
+    groups.get((ff.ot_count_days + ff.ot_count_nights))!.push(ff);
   }
   let cumulative = 0;
   let allRemainingAreWonT = false;
   for (const [, group] of groups) {
     if (allRemainingAreWonT) {
-      for (const ff of group) result.set(ff.id, 'won_t');
+      for (const ff of group) result.set(ff.id, 'wont');
       continue;
     }
     const newCumulative = cumulative + group.length;
@@ -324,7 +327,7 @@ function computeMustMightWonThreshold(
       const slotsRemaining = availableSlots - cumulative;
       for (let i = 0; i < group.length; i++) {
         if (i < slotsRemaining) result.set(group[i].id, 'might');
-        else result.set(group[i].id, 'locked_out');
+        else result.set(group[i].id, 'wont');
       }
       cumulative = availableSlots;
       allRemainingAreWonT = true;

@@ -90,34 +90,56 @@ export async function seedDatabase() {
 
   console.log(`  ✅ ${Object.keys(stationIds).length} stations created`);
 
-  // --- 4. Station Distances (from OSRM + Adam's verified Waitemata data) ---
-  const distancePath = path.resolve(process.cwd(), 'data/station_distances.json');
-  const distanceData: { station: string; distances: Record<string, number>; area: string }[] = JSON.parse(
-    fs.readFileSync(distancePath, 'utf-8')
-  );
-
-  let distCount = 0;
-  for (const entry of distanceData) {
-    const fromId = stationIds[entry.station];
-    if (!fromId) continue;
-    for (const [dstKey, km] of Object.entries(entry.distances)) {
-      // Convert key back to station name (lowercase_underscore → Title Case)
-      const dstName = Object.keys(stationIds).find(
-        n => n.toLowerCase().replace(/ /g, '_') === dstKey
-      );
-      if (!dstName || dstName === entry.station) continue;
-      const toId = stationIds[dstName];
-      if (!toId) continue;
-      await query(
-        `INSERT INTO station_distances (station_id, other_station_id, distance_km)
-         VALUES ($1, $2, $3) ON CONFLICT (station_id, other_station_id) DO UPDATE SET distance_km = $3`,
-        [fromId, toId, km]
-      );
-      distCount++;
-    }
+  // Re-sync stationIds from actual DB IDs (seed may not have cleared
+  // areas/stations, so INSERT-returnING IDs may not match real DB IDs)
+  const realStationRows = await query(`SELECT id, name FROM stations`);
+  for (const row of realStationRows.rows) {
+    stationIds[row.name] = row.id;
+  console.log("DB station IDs:", JSON.stringify(stationIds));
   }
 
-  console.log(`  ✅ ${distCount} station distances populated`);
+// --- 4. Station Distances (per-station JSONB: station_id, district, distances) ---
+const distancePath = path.resolve(process.cwd(), 'data/station_distances.json');
+const distanceData: { station: string; distances: Record<string, number>; area: string }[] = JSON.parse(
+  fs.readFileSync(distancePath, 'utf-8')
+);
+// Build per-station distance map keyed by station_id
+const stationDistMaps: Record<number, Record<number, number>> = {};
+for (const entry of distanceData) {
+  const fromId = stationIds[entry.station];
+  if (!fromId) continue;
+  const distMap: Record<number, number> = {};
+  for (const [dstKey, km] of Object.entries(entry.distances)) {
+    // Try exact match first, then underscore-key match (handles "Mt Wellington" vs "Mount Wellington")
+    const dstName =
+      Object.keys(stationIds).find(n => n === dstKey) ||
+      Object.keys(stationIds).find(n => n.toLowerCase().replace(/ /g, '_') === dstKey.toLowerCase());
+    if (!dstName || dstName === entry.station) continue;
+    const toId = stationIds[dstName];
+    if (!toId) continue;
+    distMap[toId] = km;
+  }
+  stationDistMaps[fromId] = distMap;
+}
+// Derive district per station from stationDefs areaId mapping
+const areaNameMap: Record<number, string> = { [waitemataId]: 'Waitemata', [aucklandId]: 'Auckland', [countiesManukauId]: 'Counties Manukau' };
+const stationDistrict: Record<number, string> = {};
+for (const def of stationDefs) {
+  stationDistrict[stationIds[def.name]] = areaNameMap[def.areaId] ?? '';
+}
+// Insert one row per station (station_id, district, distances JSONB)
+let distCount = 0;
+for (const [sidStr, distMap] of Object.entries(stationDistMaps)) {
+  const sid = Number(sidStr);
+  await query(
+    `INSERT INTO station_distances (station_id, district, distances)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (station_id) DO UPDATE SET district = $2, distances = $3`,
+    [sid, stationDistrict[sid] ?? '', JSON.stringify(distMap)]
+  );
+  distCount += Object.keys(distMap).length;
+}
+console.log(` ✅ ${Object.keys(stationDistMaps).length} stations with distances (${distCount} connections total)`);
 
   // --- 5. Watch Anchors ---
   await query(`INSERT INTO watch_anchors (watch, anchor_date, note) VALUES 

@@ -63,29 +63,24 @@ export async function POST(request: NextRequest) {
     );
     const requestId = otReq.rows[0].id;
 
-    const allFirefighters = await loadAllFirefighters();
-    const distances = await loadDistanceMatrix();
+    const allFirefighters = await loadAllFirefighters(pool);
+    const distances = await loadDistanceMatrix(pool);
     const assignedThisRun = new Set<number>();
 
     const otRequest = {
-      id: Number(requestId),
-      station_id: Number(stationId),
-      station_name: '',
-      station_district: null,
-      area_id: 1,
-      date,
-      shift_type: shift,
-      specialist_type: specialist || null,
-      required_qualification_ids: specialist ? [specialist] : [],
-      status: 'pending',
-      number_of_slots: Number(slots),
-      number_filled: 0,
-    };
+station_id: Number(stationId),
+station_name: '',
+district: '',
+date,
+shift_type: shift,
+slots: Number(slots),
+specialist_type: specialist || null,
+};
 
-    const { results, allTraces } = await allocateForOTRequest(otRequest, allFirefighters, distances, assignedThisRun);
+    const stationResults = await allocateForOTRequest([otRequest], allFirefighters, distances, assignedThisRun);
     const debugTrace = await buildCascadeDebugTrace(allFirefighters, distances, { date, shift_type: shift, station_id: Number(stationId), number_of_slots: Number(slots) });
 
-    const actualPhases = results.map((r: any) => r.cascade_phase || 'callback');
+    const actualPhases = stationResults.flatMap((r: any) => r.assignedFirefighters.map((af: any) => af.cascadePhase));
     const uniquePhases = [...new Set(actualPhases)];
     const watchMatrix = computeWatchMatrix(parseDateStr(date), shift);
 
@@ -93,16 +88,17 @@ export async function POST(request: NextRequest) {
       id: `custom-${date}-${shift}`,
       name: `${shift} ${date}`,
       passed: true,
-      assignmentsCount: results.length,
+      assignmentsCount: stationResults.flatMap((r: any) => r.assignedFirefighters).length,
       expectedSlots: Number(slots),
-      assigned: results.map((r: any) => ({
-        name: r.firefighter_name,
-        watch: r.watch,
-        rank: r.rank,
-        threshold: r.must_might_wont,
-        distance: r.distance_km,
-        cascadePhase: r.cascade_phase || 'callback',
-      })),
+      assigned: stationResults.flatMap((r: any) =>
+ r.assignedFirefighters.map((af: any) => ({
+ name: af.firefighter_name,
+ watch: af.watch,
+ rank: af.rank,
+ threshold: af.threshold,
+ distance: af.distance,
+ cascadePhase: af.cascadePhase,
+ }))),
       allFirefightersDetail: debugTrace.candidates,
       watchMatrix,
       debugTrace,

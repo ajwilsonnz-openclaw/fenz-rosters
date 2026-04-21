@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { query } from '@/lib/db';
 import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
-import { runFullAllocation } from '@/engine/allocation-engine';
+
 
 
 function formatQuals(quals: any): string {
@@ -118,8 +118,16 @@ export default async function OfficerPage() {
 
   async function runAllocation() {
     'use server';
-    const results = await runFullAllocation();
-    console.log('Allocation complete:', JSON.stringify(results));
+    const { getPool } = await import('@/lib/db');
+      const { loadAllFirefighters, loadDistanceMatrix, allocateForOTRequest } = await import('@/engine/allocation-engine');
+      const pool = getPool();
+      const pending = await pool.query(`SELECT otr.station_id, s.name as station_name, a.name as district, otr.date::text, otr.shift_type, otr.number_of_slots, otr.specialist_type FROM ot_requests otr JOIN stations s ON s.id = otr.station_id JOIN areas a ON s.area_id = a.id WHERE otr.status = 'pending'`);
+      const allFFs = await loadAllFirefighters(pool);
+      const distMatrix = await loadDistanceMatrix(pool);
+      const requests = pending.rows.map((r: any) => ({ station_id: r.station_id, station_name: r.station_name, district: r.district, date: r.date, shift_type: r.shift_type, slots: r.number_of_slots, specialist_type: r.specialist_type }));
+      const stationResults = await allocateForOTRequest(requests, allFFs, distMatrix, new Set());
+      console.log('Allocation: assigned', stationResults.flatMap((r: any) => r.assignedFirefighters).length, 'FFs');
+    // allocation done
     revalidatePath('/officer');
     revalidatePath('/');
   }

@@ -1,0 +1,22 @@
+⨯ Failed to start server
+Error: listen EADDRINUSE: address already in use :::3005
+    at <unknown> (Error: listen EADDRINUSE: address already in use :::3005)
+    at new Promise (<anonymous>) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 3005
+}
+▲ Next.js 16.2.2
+- Local:         http://localhost:3005
+- Network:       http://10.0.0.215:3005
+✓ Ready in 179ms
+Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id
+    at ignore-listed frames
+▲ Next.js 16.2.2
+- Local:         http://localhost:3006
+- Network:       http://10.0.0.215:3006
+✓ Ready in 163ms
+Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id
+    at ignore-listed frames

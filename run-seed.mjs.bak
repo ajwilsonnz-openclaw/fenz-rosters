@@ -1,0 +1,10 @@
+process.env.DATABASE_URL = 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot';
+
+async function main() {
+  const { seedDatabase } = await import('./src/lib/seed.ts');
+  await seedDatabase();
+  console.log('Done');
+  process.exit(0);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

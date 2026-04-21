@@ -1,478 +1,266 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Pool } from 'pg';
-
-import { getShift, getCallbackType, getShiftStatus } from '@/engine/watch-math';
-import {
-  loadAllFirefighters,
-  loadDistanceMatrix,
-  allocateForOTRequest,
-  type Firefighter,
-  type DistanceMatrix,
-  type AllocationResult,
-} from '@/engine/allocation-engine';
+import { getPool } from '@/lib/db';
+import { loadAllFirefighters, loadDistanceMatrix, allocateV2, type Firefighter } from '@/engine/allocation-engine-v2';
+import { seedDatabase } from '@/lib/seed';
 
 export const dynamic = 'force-dynamic';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// ━━━ SINGLE MULTI-STATION SCENARIO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const SCENARIO_CONFIG = {
-  id: 'waitemata-day',
-  name: 'Waitemata Day — 5 Stations',
-  date: '2026-04-10',
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Test scenario — v2 engine
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const SCENARIO = {
+  id: 'v2-comprehensive',
+  name: 'Comprehensive v2 — FF + SO + SSO across 3 districts',
+  date: '2026-04-07',
   shift: 'Day' as const,
   stations: [
-    { stationName: 'Albany', slots: 3, specialist: null },
-    { stationName: 'Devonport', slots: 2, specialist: null },
-    { stationName: 'Silverdale', slots: 2, specialist: null },
-    { stationName: 'Takapuna', slots: 2, specialist: null },
-    { stationName: 'East Coast Bays', slots: 2, specialist: null },
+    // FF stations
+    { stationName: 'Albany',        district: 'Waitemata',          slots: 3, required_rank: 'FF',       specialist: null  },
+    { stationName: 'Devonport',     district: 'Waitemata',          slots: 2, required_rank: 'FF',       specialist: null  },
+    // SSO stations
+    { stationName: 'Silverdale',    district: 'Waitemata',          slots: 2, required_rank: 'SSO',      specialist: 'prt' },
+    { stationName: 'Takapuna',      district: 'Waitemata',          slots: 2, required_rank: 'SSO',      specialist: null  },
+    // SO stations
+    { stationName: 'Papakura',      district: 'Counties Manukau',   slots: 3, required_rank: 'SO',       specialist: null  },
+    { stationName: 'Manurewa',      district: 'Counties Manukau',   slots: 2, required_rank: 'SO',       specialist: null  },
+    { stationName: 'Otahuhu',       district: 'Counties Manukau',   slots: 2, required_rank: 'SO',       specialist: null  },
+    // SSO station
+    { stationName: 'Papatoetoe',    district: 'Counties Manukau',   slots: 2, required_rank: 'SSO',      specialist: null  },
+    // SO stations
+    { stationName: 'Grey Lynn',     district: 'Auckland',          slots: 2, required_rank: 'SO',       specialist: null  },
+    { stationName: 'Remuera',       district: 'Auckland',          slots: 2, required_rank: 'SO',       specialist: null  },
+    // SSO stations
+    { stationName: 'Avondale',      district: 'Auckland',          slots: 2, required_rank: 'SSO',      specialist: null  },
+    { stationName: 'Mount Roskill', district: 'Auckland',          slots: 2, required_rank: 'SSO',      specialist: null  },
   ],
 };
 
-// Known-result test: Simple 1-station, 2-slot scenario
-// On 2026-04-10: Blue=#1 callback, Green=Off(no CB)
-// Expected: 2 Blue callback FF assigned, sorted by lowest OT then distance
-const KNOWN_RESULT_SIMPLE = {
-  id: 'known-result-simple',
-  name: 'Known Result — Albany 2-slot',
-  date: '2026-04-10',
-  shift: 'Day' as const,
-  stations: [
-    { stationName: 'Albany', slots: 2, specialist: null },
-  ],
-  expectedAssignments: [
-    { name: 'Zoe Fletcher', watch: 'Blue', threshold: 'must', reason: 'Blue CB FF, Albany→Albany 0km, cbD=1 (tied lowest)' },
-    { name: 'Marama Te Awa', watch: 'Blue', threshold: 'must', reason: 'Blue CB FF, Henderson→Albany 19km, cbD=1 (tied lowest, nearest after Zoe)' },
-  ],
-};
-
-// Complex known-result: 3 stations, specialist requirement, cross-phase allocation
-// Tests: callback district restriction, specialist qualification filtering,
-//        cross-station assignedIds tracking
-//
-// Seed OT data (Blue Waitemata FF-rank, cbD values):
-//   Zoe Fletcher     (FF,  Albany,     cbD=1, prt)
-//   Marama Te Awa    (QFF, Henderson,  cbD=1, prt)
-//   Kate Sullivan    (SFF, Silverdale, cbD=2, prt+type4)
-//   Tipene Rata      (QFF, Devonport,  cbD=3)
-//
-// Station processing order:
-//   1. Albany (2 slots, no spec) → cbD sort: Zoe(1,0km)+Marama(1,19km) [tied, distance breaks]
-//   2. Silverdale (1 slot, prt)  → remaining with prt: Kate(Silverdale→0km, cbD=2)
-//   3. Takapuna (1 slot, no spec)→ remaining: Tipene(Devonport→15km, cbD=3)
-const KNOWN_RESULT_COMPLEX = {
-  id: 'known-result-complex',
-  name: 'Known Result — 3 Stations + Specialist',
-  date: '2026-04-10',
-  shift: 'Day' as const,
-  stations: [
-    { stationName: 'Albany', slots: 2, specialist: null },
-    { stationName: 'Silverdale', slots: 1, specialist: 'prt' },
-    { stationName: 'Takapuna', slots: 1, specialist: null },
-  ],
-  expectedAssignments: [
-    { name: 'Zoe Fletcher', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Albany→Albany 0km, cbD=1' },
-    { name: 'Marama Te Awa', station: 'Albany', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Henderson→Albany 19km, cbD=1' },
-    { name: 'Kate Sullivan', station: 'Silverdale', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Silverdale→Silverdale 0km, cbD=2, has prt' },
-    { name: 'Tipene Rata', station: 'Takapuna', watch: 'Blue', phase: 'ff-callback', reason: 'Blue CB FF, Devonport→Takapuna 15km, cbD=3' },
-  ],
-};
-
-// ━━━ Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function parseNzDate(dateStr: string): Date {
   const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
+  return new Date(y, m - 1, d);
 }
 
-/** Human-friendly status labels for watch matrix */
-function getHumanStatus(watch: string, shift: string, callback: string | null, shiftStatus: string, requestShiftType: string): { label: string; eligible: boolean; reason: string } {
-  if (shiftStatus.includes('On Leave')) {
-    return { label: 'On Leave', eligible: false, reason: 'On Leave' };
-  }
-  if (callback === '#2a-EveningDay2' && requestShiftType === 'Day') {
-    return { label: 'Callback #2a', eligible: false, reason: '#2a EveningDay2 excludes Day' };
-  }
-  if (requestShiftType === 'Day' && callback === '#3-AfterLastNight') {
-    return { label: 'Night Between', eligible: false, reason: 'Between Nights — Day OT excluded' };
-  }
-  if (requestShiftType === 'Night' && callback === '#2b-DayOfNight1') {
-    return { label: 'Day Between', eligible: false, reason: 'Between Days — Night OT excluded' };
-  }
-  // Blue = Before Day1 + Callback, Green = Non-Callback
-  if (watch === 'Blue' && callback === '#1-BeforeDay1') {
-    return { label: 'Before Day 1 (Callback)', eligible: true, reason: 'Blue #1 — eligible for Callback pool' };
-  }
-  if (callback) {
-    return { label: `On Duty (${callback})`, eligible: true, reason: `Callback: ${callback}` };
-  }
-  if (watch === 'Green' && shift === 'Off') {
-    return { label: 'Non-Callback', eligible: true, reason: 'Green Off — eligible for Non-Callback pool' };
-  }
-  if (shift === 'Day') {
-    return { label: 'On Duty', eligible: true, reason: 'Day shift' };
-  }
-  if (shift === 'Night') {
-    return { label: 'Night Shift', eligible: false, reason: 'Night shift' };
-  }
-  return { label: 'On Duty', eligible: true, reason: 'Off duty (available)' };
-}
-
-function computeWatchMatrix(date: Date, requestShiftType: 'Day' | 'Night') {
-  const watches = ['Green', 'Red', 'Brown', 'Blue'] as const;
-  return watches.map((watch) => {
-    const shift = getShift(watch, date);
-    const callback = getCallbackType(watch, date);
-    const shiftStatus = getShiftStatus(watch, date);
-    const { label, eligible, reason } = getHumanStatus(watch, shift, callback, shiftStatus, requestShiftType);
-    return { watch, shift, statusLabel: label, onLeave: shiftStatus.includes('On Leave'), callback, eligible, reason };
-  });
-}
-
-// ━━━ Specialist station lookup ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-interface StationRow {
-  id: number;
-  name: string;
-  district: string | null;
-}
-
-/** Auto-qualify any FF for their home station's specialist type */
-async function loadAndApplyHomeStationQuals(firefighters: Firefighter[]): Promise<void> {
-  const { rows } = await pool.query('SELECT id, specialist_type FROM stations WHERE specialist_type IS NOT NULL');
+async function applyHomeStationQuals(ffs: Firefighter[]): Promise<void> {
+  const pool = getPool();
+  const { rows } = await pool.query<{ id: number; specialist_type: string }>(
+    `SELECT id, specialist_type FROM stations WHERE specialist_type IS NOT NULL`);
   const stationSpecTypes: Record<number, string> = {};
-  for (const r of rows) {
-    stationSpecTypes[r.id] = r.specialist_type;
-  }
-  for (const ff of firefighters) {
+  for (const r of rows) stationSpecTypes[r.id] = r.specialist_type;
+  for (const ff of ffs) {
     const homeSpec = stationSpecTypes[ff.station_id];
-    if (homeSpec && !ff.qualifications[homeSpec]) {
-      ff.qualifications[homeSpec] = true;
-    }
+    if (homeSpec && !ff.qualifications[homeSpec]) ff.qualifications[homeSpec] = true;
   }
 }
 
-// ━━━ Specialist steal logic ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-interface StationResult {
-  stationName: string;
-  stationId: number;
-  slots: number;
-  specialist: string | null;
-  traceLogs?: any[];
-  assignedFirefighters: {
-    name: string; id: number; watch: string; rank: string;
-    threshold: string; distance: number; homeStation: string;
-    cascadePhase: string; callback: string | null;
-    qualifications: string[];
-    stolenFrom?: string;
-  }[];
-  phasesUsed: string[];
-}
-
-/**
- * After the cascade pass, check if any specialist stations are short.
- * Steal the closest-in-distance qualified firefighter from any other station
- * that is NOT a specialist station, AND where the donor station would still
- * have at least 1 firefighter left.
- */
-function stealForSpecialists(
-  stationResults: StationResult[],
-  allFirefighters: Firefighter[],
-  distanceMatrix: DistanceMatrix,
-): void {
-  const specialistStations = stationResults.filter(sr => sr.specialist);
-  for (const spec of specialistStations) {
-    while (spec.assignedFirefighters.length < spec.slots) {
-      let bestSteal: { fromStation: StationResult; ffIdx: number; dist: number } | null = null;
-
-      for (const donor of stationResults) {
-        if (donor.stationId === spec.stationId) continue;
-        if (donor.assignedFirefighters.length <= 1) continue;
-        if (donor.specialist) continue;
-
-        for (let j = 0; j < donor.assignedFirefighters.length; j++) {
-          const af = donor.assignedFirefighters[j];
-          const ff = allFirefighters.find(f => f.id === af.id);
-          if (!ff) continue;
-          if (spec.specialist && !ff.qualifications?.[spec.specialist]) continue;
-
-          const dist = distanceMatrix[ff.station_id]?.[spec.stationId] ?? 999;
-          if (!bestSteal || dist < bestSteal.dist) {
-            bestSteal = { fromStation: donor, ffIdx: j, dist };
-          }
-        }
-      }
-
-      if (!bestSteal) break;
-
-      const stolen = bestSteal.fromStation.assignedFirefighters.splice(bestSteal.ffIdx, 1)[0];
-      spec.assignedFirefighters.push({
-        ...stolen,
-        cascadePhase: 'specialist-steal',
-        stolenFrom: bestSteal.fromStation.stationName,
-      });
-
-      // Fix trace log mismatch: record steal events in both stations' traces
-      if (!spec.traceLogs) spec.traceLogs = [];
-      spec.traceLogs.push({ phase: 'specialist-steal', logs: [{
-        type: 'assign', message: `STOLEN: ${stolen.name} from ${bestSteal.fromStation.stationName}`,
-        detail: `${stolen.watch} | needs ${spec.specialist} | dist=${bestSteal.dist}km`
-      }]});
-      if (!bestSteal.fromStation.traceLogs) bestSteal.fromStation.traceLogs = [];
-      bestSteal.fromStation.traceLogs.push({ phase: 'specialist-steal', logs: [{
-        type: 'skip', message: `LOST: ${stolen.name} stolen by ${spec.stationName}`,
-        detail: `Required ${spec.specialist} qualification`
-      }]});
-    }
-  }
-}
-
-// ━━━ Fix #3: Cross-station OOD tracker (1 per watch total) ━━━━━━━━━━━━
-// Populated in the test route and passed to allocateForOTRequest
-
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json().catch(() => ({}));
-
-    if (body.action === 'reset_ot_counts') {
-      await pool.query('UPDATE firefighters SET ot_count_days = 0, ot_count_nights = 0, ot_count_callback_days = 0, ot_count_callback_nights = 0, ot_count_noncallback_days = 0, ot_count_noncallback_nights = 0');
-      await pool.query('TRUNCATE ot_assignments, ot_requests, allocation_runs CASCADE');
-      // NOTE: Do NOT wipe qualifications — they come from seed data and should persist
-      return NextResponse.json({ success: true, message: 'OT counts reset' });
-    }
-
-    // Select scenario based on request body
-    const scenarioId = body.scenario || 'default';
-    const scenarioMap: Record<string, { id: string; name: string; date: string; shift: 'Day' | 'Night'; stations: { stationName: string; slots: number; specialist: string | null }[]; expectedAssignments?: { name: string }[] }> = {
-      'default': SCENARIO_CONFIG,
-      'known-result': KNOWN_RESULT_SIMPLE,
-      'known-result-simple': KNOWN_RESULT_SIMPLE,
-      'known-result-complex': KNOWN_RESULT_COMPLEX,
-    };
-    const SCENARIO = scenarioMap[scenarioId] || SCENARIO_CONFIG;
-    const expectedAssignments = SCENARIO.expectedAssignments || null;
-
     const date = parseNzDate(SCENARIO.date);
-    await pool.query('TRUNCATE ot_assignments, ot_requests, allocation_runs CASCADE');
-    await pool.query('UPDATE firefighters SET want_to_work_day = true, want_to_work_night = true');
 
-    // Resolve station IDs and districts by name
+    // Reset + reseed
+    const pool = getPool();
+    await pool.query(`SET session_replication_role = replica`);
+    for (const t of ['ot_count_log','audit_logs','ot_offers','availability',
+      'district_relievers','ot_assignments','ot_requests','allocation_runs',
+      'station_distances','system_settings','watch_anchors','areas','firefighters','stations']) {
+      await pool.query(`DELETE FROM ${t}`).catch(() => {});
+    }
+    await seedDatabase();
+
+    // Resolve station IDs
     const stationIdMap: Record<string, number> = {};
     const stationDistrictMap: Record<string, string> = {};
+    const stationRankMap: Record<string, string> = {};
+    const stationSpecMap: Record<string, string | null> = {};
     for (const sc of SCENARIO.stations) {
       const res = await pool.query(
-        'SELECT s.id, a.name as district FROM stations s JOIN areas a ON s.area_id = a.id WHERE s.name = $1',
-        [sc.stationName]
-      );
-      if (res.rows.length === 0) throw new Error(`Station "${sc.stationName}" not found in DB`);
+        `SELECT s.id, a.name as district FROM stations s JOIN areas a ON s.area_id = a.id WHERE s.name = $1`,
+        [sc.stationName]);
+      if (res.rows.length === 0) throw new Error(`Station "${sc.stationName}" not found`);
       stationIdMap[sc.stationName] = res.rows[0].id;
       stationDistrictMap[sc.stationName] = res.rows[0].district;
+      stationRankMap[sc.stationName] = sc.required_rank;
+      stationSpecMap[sc.stationName] = sc.specialist;
     }
 
-    // NOTE: OOD qualification overrides removed — engine now relies on seed data qualifications only.
-    // Home-station specialist quals are applied below.
-    const allFirefighters = await loadAllFirefighters();
-    // FIX #5: Auto-qualify FF for home station specialist type
-    await loadAndApplyHomeStationQuals(allFirefighters);
+    // Load data
+    let allFirefighters = await loadAllFirefighters(pool);
+    await applyHomeStationQuals(allFirefighters);
+    const distanceMatrix = await loadDistanceMatrix(pool);
 
-    const distanceMatrix = await loadDistanceMatrix();
-    const assignedIds = new Set<number>();
+    // Build OT requests (v2 format)
+    const requests = SCENARIO.stations.map(st => ({
+      station_id: stationIdMap[st.stationName],
+      station_name: st.stationName,
+      district: stationDistrictMap[st.stationName],
+      date: date.toISOString().split('T')[0],
+      shift_type: SCENARIO.shift,
+      slots: st.slots,
+      specialist_type: st.specialist,
+      required_rank: st.required_rank as 'FF' | 'SO' | 'SSO' | 'SO_OR_SSO',
+      required_qualifications: st.specialist ? [st.specialist] : [],
+    }));
 
-    const watchMatrix = computeWatchMatrix(date, SCENARIO.shift);
+    // Run v2 allocation
+    const stationResults = await allocateV2(requests, allFirefighters, distanceMatrix, new Set());
 
-    const stationResults: StationResult[] = [];
+    // Build summaries
     let totalAssigned = 0;
     let totalSlots = 0;
     const allPhases = new Set<string>();
+    const assignmentMap = new Map<number, { stationName: string; distance: number; phase: string; threshold: string; group: number }>();
+    const GROUP_NAMES: Record<number, string> = {
+      1: 'FF in-district callback', 2: 'FF in-district non-callback',
+      3: 'FF OOD-adj callback',     4: 'FF OOD-adj non-callback',
+      5: 'FF OOD-dist callback',    6: 'FF OOD-dist non-callback',
+      7: 'SO pool', 8: 'SSO pool', 9: 'SSO→SO overflow',
+    };
 
-    // FIX #2: Collect all "Available Overtimes" — expanded per slot
-    const availableOvertimes: { stationName: string; slots: number; specialist: string | null; reqId: number }[] = [];
+    for (const sr of stationResults) {
+      totalAssigned += sr.assignedFirefighters.length;
+      for (const af of sr.assignedFirefighters) {
+        assignmentMap.set(af.firefighter_id, {
+          stationName: sr.station_name,
+          distance: af.distance,
+          phase: af.cascadePhase,
+          threshold: af.threshold,
+          group: af.assignedAtGroup,
+        });
+        allPhases.add(af.cascadePhase);
+      }
+    }
+    for (const sc of SCENARIO.stations) totalSlots += sc.slots;
 
-    for (const station of SCENARIO.stations) {
-      const stationId = stationIdMap[station.stationName];
-      totalSlots += station.slots;
+    // ── Watch summary ────────────────────────────────────────────────────────
+    const { getShift, getCallbackType } = await import('@/engine/watch-math');
+    const WATCH_ORDER = ['Red', 'Green', 'Brown', 'Blue'];
+    const dateStr = date.toISOString().split('T')[0];
+    const watchSummary: Record<string, { label: string; type: string; callback: string | null; shift: string; eligible: number; assigned: number }> = {};
 
-      // Insert OT request
-      const otReq = await pool.query(
-        `INSERT INTO ot_requests (station_id, date, shift_type, specialist_type, number_of_slots, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING *`,
-        [stationId, date.toISOString().split('T')[0], SCENARIO.shift, station.specialist, station.slots, 'pending']
-      );
-      const otRequestId = otReq.rows[0].id;
+    for (const watch of WATCH_ORDER) {
+      const watchFFs = allFirefighters.filter(ff => ff.watch === watch);
+      const shift = getShift(watch as any, date);
+      const callback = getCallbackType(watch as any, date);
+      const shiftLabel = shift === 'Off' ? 'Off' : shift === 'Day' ? 'Day shift' : 'Night shift';
+      const watchType = callback ? 'callback' : shift === 'Off' ? 'non-callback' : 'leave';
 
-      // FIX #2: record available OT with expanded slots
-      for (let s = 0; s < station.slots; s++) {
-        availableOvertimes.push({ stationName: station.stationName, slots: 1, specialist: station.specialist, reqId: otRequestId });
+      let eligible = 0;
+      for (const ff of watchFFs) {
+        const shiftForFF = getShift(ff.watch as any, date);
+        if (shiftForFF !== 'Off') continue;
+        eligible++;
       }
 
-      const request = {
-        id: otRequestId,
-        station_id: stationId,
-        station_name: station.stationName,
-        station_district: stationDistrictMap[station.stationName],
-        area_id: 1,
-        date: date.toISOString().split('T')[0],
-        shift_type: SCENARIO.shift as 'Day' | 'Night',
-        specialist_type: station.specialist,
-        required_qualification_ids: [] as string[],
-        status: 'pending',
-        number_of_slots: station.slots,
-        number_filled: 0,
+      watchSummary[watch] = {
+        label: watch,
+        type: watchType,
+        callback: callback || null,
+        shift: shiftLabel,
+        eligible,
+        assigned: Array.from(assignmentMap.entries()).filter(([id]) => watchFFs.some(f => f.id === id)).length,
       };
+    }
 
-      const { results, allTraces } = await allocateForOTRequest(
-        request, allFirefighters, distanceMatrix, assignedIds
-      );
-
-      // DEBUG: collect trace logs
-      const traceLogs: any[] = [];
-      for (const t of allTraces) {
-        traceLogs.push({ phase: t.phase, logs: t.traceLog });
-      }
-
-      for (const r of results) assignedIds.add(r.firefighter_id);
-      totalAssigned += results.length;
-      allTraces.forEach(t => allPhases.add(t.phase));
-
-      stationResults.push({
-        stationName: station.stationName,
-        stationId: stationId,
-        slots: station.slots,
-        specialist: station.specialist,
-        traceLogs,
-        assignedFirefighters: results.map(r => {
-          const ff = allFirefighters.find(f => f.id === r.firefighter_id);
+    // ── Station breakdown ────────────────────────────────────────────────────
+    const stationBreakdown = stationResults.map(sr => {
+      const sc = SCENARIO.stations.find(s => s.stationName === sr.station_name)!;
+      return {
+        stationName: sr.station_name,
+        district: stationDistrictMap[sr.station_name],
+        slots: sr.slots,
+        specialist: sr.specialist,
+        requiredRank: sr.required_rank,
+        filled: sr.assignedFirefighters.length,
+        complete: sr.assignedFirefighters.length >= sr.slots,
+        phasesUsed: sr.phasesUsed,
+        assigned: sr.assignedFirefighters.map(af => {
+          const ff = allFirefighters.find(f => f.id === af.firefighter_id)!;
           return {
-            name: r.firefighter_name, id: r.firefighter_id,
-            watch: r.watch, rank: r.rank, threshold: r.must_might_wont,
-            distance: r.distance_km, homeStation: ff?.station_name || '?',
-            cascadePhase: r.cascade_phase, callback: r.callback_type,
-            qualifications: ff ? Object.keys(ff.qualifications).filter(k => ff.qualifications[k]) : [],
+            name: af.firefighter_name,
+            district: ff?.district || '?',
+            rank: af.rank,
+            watch: ff?.watch || '?',
+            distance: af.distance,
+            threshold: af.threshold,
+            group: af.assignedAtGroup,
+            phase: af.cascadePhase,
+            homeStation: af.home_station,
+            cbDays: ff?.ot_count_callback_days || 0,
+            cbNights: ff?.ot_count_callback_nights || 0,
+            ncDays: ff?.ot_count_noncallback_days || 0,
+            ncNights: ff?.ot_count_noncallback_nights || 0,
           };
         }),
-        phasesUsed: allTraces.map(t => t.phase),
-      });
-    }
+      };
+    });
 
-    // Specialist steal pass
-    stealForSpecialists(stationResults, allFirefighters, distanceMatrix);
-
-    totalAssigned = stationResults.reduce((sum, sr) => sum + sr.assignedFirefighters.length, 0);
-
-    // Build assignment map
-    const assignmentMap = new Map<number, {
-      stationName: string; distance: number; cascadePhase: string; callback: string | null;
-      threshold: string; quals: string[]; stolenFrom?: string;
-    }>();
+    // ── Phase coverage ───────────────────────────────────────────────────────
+    const phaseCoverage: Record<string, number> = {};
+    for (const phase of Object.values(GROUP_NAMES)) phaseCoverage[phase] = 0;
     for (const sr of stationResults) {
       for (const af of sr.assignedFirefighters) {
-        assignmentMap.set(af.id, {
-          stationName: sr.stationName, distance: af.distance,
-          cascadePhase: af.cascadePhase, callback: af.callback,
-          threshold: af.threshold, quals: af.qualifications, stolenFrom: af.stolenFrom,
-        });
+        phaseCoverage[af.cascadePhase] = (phaseCoverage[af.cascadePhase] || 0) + 1;
       }
     }
 
+    // ── All FF detail list ───────────────────────────────────────────────────
+    const PHASE_PRIORITY: Record<string, number> = {
+      'ff-callback': 1, 'ff-noncallback': 2, 'ood-adj-cb': 3, 'ood-adj-nc': 4,
+      'ood-dist-cb': 5, 'ood-dist-nc': 6, 'so': 7, 'sso': 8, 'sso-overflow': 9, unassigned: 98,
+    };
+
     const allFirefightersDetail = allFirefighters.map(ff => {
-      const shift = getShift(ff.watch, date);
-      const callback = getCallbackType(ff.watch, date);
-      const shiftStatus = getShiftStatus(ff.watch, date);
-      const assignment = assignmentMap.get(ff.id);
-      const isAssigned = !!assignment;
-      const qualifications = Object.keys(ff.qualifications).filter(k => ff.qualifications[k]);
-
-      let eligible = true;
-      let cascadePhase = assignment?.cascadePhase || 'unassigned';
-      if (shiftStatus.includes('On Leave')) {
-        eligible = false; cascadePhase = 'locked_out';
-      } else if (callback === '#3-AfterLastNight' && SCENARIO.shift === 'Day') {
-        eligible = false; cascadePhase = 'locked_out';
-      } else if (callback === '#2a-EveningDay2' && SCENARIO.shift === 'Day') {
-        eligible = false; cascadePhase = 'locked_out';
-      } else if (shift === 'Night' && !callback) {
-        eligible = false; cascadePhase = 'locked_out';
-      }
-
-      const dist = assignment?.distance || 0;
-
+      const a = assignmentMap.get(ff.id);
+      const quals = Object.keys(ff.qualifications).filter(k => ff.qualifications[k]);
       return {
         id: ff.id,
         name: `${ff.first_name} ${ff.last_name}`,
+        district: ff.district,
         watch: ff.watch,
         rank: ff.rank,
         homeStation: ff.station_name,
-        otStation: assignment?.stationName || '—',
-        distance: dist,
-        otDays: ff.ot_count_days,
-        otNights: ff.ot_count_nights,
-        cbDays: ff.ot_count_callback_days ?? 0,
-        cbNights: ff.ot_count_callback_nights ?? 0,
-        ncDays: ff.ot_count_noncallback_days ?? 0,
-        ncNights: ff.ot_count_noncallback_nights ?? 0,
-        isAssigned,
-        isEligible: eligible,
-        cascadePhase,
-        callback: assignment?.callback || callback || null,
-        quals: qualifications,
-        stolenFrom: assignment?.stolenFrom || null,
-        threshold: assignment?.threshold || '—',
+        otStation: a?.stationName || '',
+        distance: a?.distance || 0,
+        cbDays: ff.ot_count_callback_days,
+        cbNights: ff.ot_count_callback_nights,
+        ncDays: ff.ot_count_noncallback_days,
+        ncNights: ff.ot_count_noncallback_nights,
+        isAssigned: !!a,
+        phase: a?.phase || 'unassigned',
+        threshold: a?.threshold || 'unassigned',
+        group: a?.group || 0,
+        quals,
       };
     });
-
-    // Sort: Assigned first → Eligible unassigned → Ineligible
-    const PHASE_PRIORITY: Record<string, number> = {
-      'ff-callback': 1, 'ff-noncallback': 2, 'ood-ff-callback': 3, 'ood-ff-noncallback': 4,
-      'so-callback': 5, 'sso-callback': 6, 'so-noncallback': 7, 'sso-noncallback': 8,
-      'specialist-steal': 9, unassigned: 98, locked_out: 99,
-    };
 
     allFirefightersDetail.sort((a, b) => {
-      const aGroup = a.isAssigned ? 0 : (a.isEligible ? 1 : 2);
-      const bGroup = b.isAssigned ? 0 : (b.isEligible ? 1 : 2);
-      if (aGroup !== bGroup) return aGroup - bGroup;
-      const phaseDiff = (PHASE_PRIORITY[a.cascadePhase] || 99) - (PHASE_PRIORITY[b.cascadePhase] || 99);
-      if (phaseDiff !== 0) return phaseDiff;
-      return (a.otDays + a.otNights) - (b.otDays + b.otNights);
+      if (a.isAssigned !== b.isAssigned) return a.isAssigned ? -1 : 1;
+      const pd = (PHASE_PRIORITY[a.phase] || 99) - (PHASE_PRIORITY[b.phase] || 99);
+      if (pd !== 0) return pd;
+      return (a.cbDays + a.cbNights) - (b.cbDays + b.cbNights);
     });
-
-    // Known-result validation
-    let knownResultCheck = null;
-    if (expectedAssignments) {
-      const actualNames = stationResults.flatMap(sr => sr.assignedFirefighters.map(af => af.name));
-      const expectedNames = expectedAssignments.map(e => e.name);
-      const passed = expectedNames.every((name, idx) => actualNames[idx] === name);
-      knownResultCheck = {
-        passed,
-        expected: expectedAssignments,
-        actual: actualNames,
-        mismatches: expectedNames.map((name, idx) => ({
-          position: idx,
-          expected: name,
-          actual: actualNames[idx] || '(empty)',
-          match: actualNames[idx] === name,
-        })).filter(m => !m.match),
-      };
-    }
 
     return NextResponse.json({
-      id: SCENARIO.id,
-      name: SCENARIO.name,
+      scenarioId: SCENARIO.id,
+      scenarioName: SCENARIO.name,
       date: SCENARIO.date,
       shift: SCENARIO.shift,
-      watchMatrix,
       totalSlots,
       totalAssigned,
-      stationResults,
-      allFirefightersDetail,
+      fillRate: totalSlots > 0 ? Math.round((totalAssigned / totalSlots) * 100) : 0,
       phasesUsed: Array.from(allPhases),
-      availableOvertimes,
-      ...(knownResultCheck ? { knownResultCheck } : {}),
+      phaseCoverage,
+      stationBreakdown,
+      allFirefightersDetail,
+      watchSummary,
+      seedSummary: {
+        totalFirefighters: allFirefighters.length,
+        totalStations: SCENARIO.stations.length,
+        totalSlots,
+      },
     });
+
   } catch (err: any) {
     return NextResponse.json({ error: err.message, stack: err.stack }, { status: 500 });
   }

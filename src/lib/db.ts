@@ -1,21 +1,27 @@
 import { Pool } from 'pg';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: false,
-});
+let _pool: Pool | null = null;
 
-export async function query(text: string, params?: any[]) {
+export function getPool(): Pool {
+  if (!_pool) {
+    _pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: false,
+    });
+  }
+  return _pool;
+}
+
+export async function query(text: string, params?: any[]) { console.log("[DB]", text.substring(0, 80));
+  const pool = getPool();
   const start = Date.now();
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
-  console.log('executed query', { text, duration, rows: res.rowCount });
+  console.log('executed query', { text: text.substring(0, 60), duration, rows: res.rowCount });
   return res;
 }
 
 export async function getClient() {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   return client;
 }
-
-export { pool };

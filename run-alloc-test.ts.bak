@@ -1,0 +1,87 @@
+process.env.DATABASE_URL = 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot';
+process.env.DIRECT_URL = 'postgresql://postgres:fenz_dev_pass@127.0.0.1:5433/fenz_ot';
+import { loadAllFirefighters, loadDistanceMatrix, allocateForOTRequest, buildCascadePool } from './src/engine/allocation-engine';
+import { Pool } from 'pg';
+
+async function main() {
+  const p = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
+  try {
+    await p.query('DELETE FROM ot_assignments');
+    await p.query('DELETE FROM ot_requests');
+    await p.query('DELETE FROM allocation_runs');
+
+    const { seedDatabase } = await import('./src/lib/seed');
+    await seedDatabase();
+
+    const albanyResult = await p.query('SELECT id FROM stations WHERE name = $1', ['Albany']);
+    const albanyId = albanyResult.rows[0].id;
+    const inserted = await p.query(
+      `INSERT INTO ot_requests (station_id, date, shift_type, number_of_slots, status, created_at)
+       VALUES ($1, '2026-04-10', 'Day', 2, 'pending', NOW()) RETURNING id`,
+      [albanyId]
+    );
+    const requestId = inserted.rows[0].id;
+    console.log(`Created OT request id=${requestId}`);
+
+    const ff = await loadAllFirefighters();
+    const dm = await loadDistanceMatrix();
+    console.log(`Loaded: ${ff.length} FFs, ${Object.keys(dm).length} station distances`);
+
+    const Zoe = ff.find(f => f.first_name === 'Zoe' && f.last_name === 'Fletcher');
+    const Emma = ff.find(f => f.first_name === 'Emma' && f.last_name === 'Chen');
+    const Marama = ff.find(f => f.first_name === 'Marama' && f.last_name === 'Te Awa');
+    console.log(`Zoe: cbD=${Zoe?.ot_count_callback_days} district=${Zoe?.district} rank=${Zoe?.rank}`);
+    console.log(`Emma: cbD=${Emma?.ot_count_callback_days} district=${Emma?.district} rank=${Emma?.rank}`);
+    console.log(`Marama: cbD=${Marama?.ot_count_callback_days} district=${Marama?.district} rank=${Marama?.rank}`);
+
+    const { loadPendingOTRequests } = await import('./src/engine/allocation-engine');
+    const requests = await loadPendingOTRequests();
+    const req = requests.find(r => r.station_name === 'Albany')!;
+    const otDate = new Date(req.date + 'T00:00:00');
+    console.log(`OT request: station=${req.station_name} date=${req.date} shift=${req.shift_type}`);
+
+    // Trace all phases
+    const phases = ['dist-0', 'dist-1', 'dist-2', 'dist-3', 'dist-4', 'ff-callback', 'ff-noncallback',
+                    'ood-ff-callback', 'ood-ff-noncallback', 'so-callback', 'sso-callback'];
+    for (const phase of phases) {
+      const { candidates, traceLog } = buildCascadePool(phase, req, otDate, ff, new Set(), dm, req.number_of_slots);
+      const emmaIn = candidates.find(f => f.id === Emma?.id);
+      const zoeIn = candidates.find(f => f.id === Zoe?.id);
+      const maramaIn = candidates.find(f => f.id === Marama?.id);
+
+      const eSkip = Emma && !emmaIn ? traceLog.find(l => l.type === 'skip' && l.message?.includes('Emma')) : null;
+      const eHeader = traceLog.find(l => l.type === 'header' && l.message?.includes('dist-0'));
+      if (phase === 'dist-0') { console.log('  dist-0 traceLog entries:'); for (const tl of traceLog) { if (tl.message?.includes('Emma') || tl.type === 'header') { console.log('   ', tl.type, ':', tl.message, '|', tl.detail); } } }
+      const zSkip = Zoe && !zoeIn ? traceLog.find(l => l.type === 'skip' && l.message?.includes('Zoe')) : null;
+
+      const parts: string[] = [];
+      if (emmaIn) parts.push(`Emma=IN(cbD=${emmaIn.ot_count_callback_days})`);
+      else if (Emma) parts.push(`Emma=OUT(${eSkip?.detail || '?'})`);
+      if (zoeIn) parts.push(`Zoe=IN(cbD=${zoeIn.ot_count_callback_days})`);
+      else if (Zoe) parts.push(`Zoe=OUT(${zSkip?.detail || '?'})`);
+      if (maramaIn) parts.push(`Marama=IN`);
+      else if (Marama) parts.push(`Marama=OUT`);
+
+      if (parts.length > 0 || candidates.length > 0) {
+        console.log(`  ${phase}: ${parts.join(' | ') || '(no target FFs)'}`);
+      }
+    }
+
+    // Run full allocation
+    const { results } = await allocateForOTRequest(req, ff, dm, new Set());
+    console.log(`\nFinal Results (${results.length} assigned):`);
+    for (const r of results) {
+      console.log(`  ${r.firefighter_name} | phase=${r.cascade_phase} | dist=${r.distance_km}km`);
+    }
+
+    const hasZoe = results.some(r => r.firefighter_name?.includes('Zoe'));
+    const hasMarama = results.some(r => r.firefighter_name?.includes('Marama'));
+    console.log(`\n✅ Zoe Fletcher: ${hasZoe} | ✅ Marama Te Awa: ${hasMarama}`);
+  } catch(e) {
+    console.error('ERROR:', e.message);
+    console.error(e.stack?.split('\n').slice(0,5).join('\n'));
+  }
+  await p.end();
+  process.exit(0);
+}
+main();
