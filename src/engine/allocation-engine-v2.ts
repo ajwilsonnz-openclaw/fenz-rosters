@@ -236,7 +236,7 @@ interface CandidateEntry {
   threshold: 'must' | 'might' | 'wont';
 }
 
-function getEligibleGroups(ff: Firefighter, req: OTRequest): GroupDef[] {
+export function getEligibleGroups(ff: Firefighter, req: OTRequest): GroupDef[] {
   // Determine which groups this FF belongs to for this request
   const results: GroupDef[] = [];
   const ffDistrict = ff.district;
@@ -275,9 +275,11 @@ function getEligibleGroups(ff: Firefighter, req: OTRequest): GroupDef[] {
   }
 
   return results;
+}
+
 // ─── Candidate Collection ────────────────────────────────────────────────────
 
-function collectCandidatesAtDistance(
+export function collectCandidatesAtDistance(
   ffs: Firefighter[],
   reqs: OTRequest[],
   distanceMatrix: DistanceMatrix,
@@ -404,7 +406,7 @@ export async function allocateV2(
     );
 
     // Filter to exactly this distance
-    const atThisDist = new Map<number, typeof Array.from(candidatesByStation.entries())[0][1]>();
+    const atThisDist = new Map<number, any[]>();
     for (const [stationId, cands] of Array.from(candidatesByStation)) {
       const filtered = cands.filter(c => c.distKm === dist);
       if (filtered.length > 0) atThisDist.set(stationId, filtered);
@@ -419,7 +421,7 @@ export async function allocateV2(
 
     // ── Process groups 1–8 in priority order ──────────────────────────────
     for (const group of GROUPS) {
-      const groupByStation = new Map<number, typeof Array.from(atThisDist.values())[0]>();
+      const groupByStation = new Map<number, any[]>();
       for (const [stationId, cands] of Array.from(atThisDist)) {
         const gc = cands.filter(c => c.group.id === group.id);
         if (gc.length > 0) groupByStation.set(stationId, gc);
@@ -598,4 +600,4 @@ export async function runAllocation(
   ]);
   const stationResults = await allocateV2(requests, allFFs, distMatrix, new Set());
   return { stationResults, traces: {} };
-
+}

@@ -31,6 +31,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, stationResults });
     }
 
+    if (body.action === 'manual_assign') {
+      const { requestId, firefighterId, distance, status, declineReason } = body;
+      const res = await query(
+        `INSERT INTO ot_assignments (ot_request_id, firefighter_id, distance_km, status, assigned_at, declined_reason)
+         VALUES ($1, $2, $3, $4, NOW(), $5)
+         RETURNING *`,
+        [requestId, firefighterId, distance || 0, status || 'assigned', declineReason || null]
+      );
+      
+      // If we are assigning, increment number_filled on the request
+      if ((status || 'assigned') !== 'declined') {
+        await query(`UPDATE ot_requests SET number_filled = number_filled + 1 WHERE id = $1`, [requestId]);
+      }
+      
+      return NextResponse.json({ success: true, assignment: res.rows[0] });
+    }
+
     if (body.action === 'update_assignment') {
       const { assignmentId, assignmentAction, declineReason } = body;
       if (assignmentAction === 'accept') {

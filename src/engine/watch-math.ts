@@ -170,3 +170,31 @@ export function getShiftStatus(watch: Watch, date: Date): string {
     case 'Off': return 'Off Duty';
   }
 }
+
+export function getOnDutyWatch(date: Date, shift: ShiftType): Watch {
+  const watches: Exclude<Watch, 'Yellow'>[] = ['Green', 'Red', 'Brown', 'Blue'];
+  for (const w of watches) {
+    if (getShift(w, date) === shift) return w;
+  }
+  return 'Green'; // Fallback
+}
+
+export function findWatchOccurrence(
+  watch: Watch, 
+  date: Date, 
+  direction: 'prev' | 'next', 
+  shiftType: ShiftType = 'Day'
+): { date: Date; shift: ShiftType } {
+  const d = new Date(date.getTime());
+  const step = direction === 'next' ? 1 : -1;
+  
+  // Max search 16 days (2 full cycles)
+  for (let i = 0; i < 16; i++) {
+    if (getShift(watch, d) === shiftType) {
+      return { date: new Date(d.getTime()), shift: shiftType };
+    }
+    d.setUTCDate(d.getUTCDate() + step);
+  }
+  
+  return { date: new Date(date), shift: shiftType };
+}
