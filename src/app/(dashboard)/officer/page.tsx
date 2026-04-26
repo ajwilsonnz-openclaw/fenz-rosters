@@ -27,6 +27,7 @@ import {
 import { Watch, getOnDutyWatch, findWatchOccurrence } from "@/engine/watch-math";
 import Sidebar from "@/components/layout/Sidebar";
 import DateToolbar from "@/components/layout/DateToolbar";
+import Header from "@/components/layout/Header";
 import { supabase } from "@/lib/supabase";
 
 export default function OfficerPage() {
@@ -242,6 +243,9 @@ export default function OfficerPage() {
 
       <div className="flex-1 flex flex-col overflow-hidden bg-white text-gray-900">
         
+        {/* TOP HEADER */}
+        <Header title="VACANCY MANAGEMENT" />
+
         {/* SHARED DATE TOOLBAR */}
         <DateToolbar 
           operativeDate={operativeDate}

@@ -62,12 +62,12 @@ export default function DateToolbar({
 
   const prevShiftDate = new Date(operativeDate.getTime());
   let prevShiftType: 'Day' | 'Night' = 'Night';
-  if (operativeShift === 'Night') prevShiftType = 'Day'; else prevShiftDate.setUTCDate(prevShiftDate.getUTCDate() - 1);
+  if (operativeShift === 'Night') prevShiftType = 'Day'; else prevShiftDate.setDate(prevShiftDate.getDate() - 1);
   const prevShiftWatch = getOnDutyWatch(prevShiftDate, prevShiftType);
 
   const nextShiftDate = new Date(operativeDate.getTime());
   let nextShiftType: 'Day' | 'Night' = 'Day';
-  if (operativeShift === 'Day') nextShiftType = 'Night'; else nextShiftDate.setUTCDate(nextShiftDate.getUTCDate() + 1);
+  if (operativeShift === 'Day') nextShiftType = 'Night'; else nextShiftDate.setDate(nextShiftDate.getDate() + 1);
   const nextShiftWatch = getOnDutyWatch(nextShiftDate, nextShiftType);
 
   const calendarDays = getCalendarDays(calendarViewDate, operativeShift);
@@ -80,7 +80,17 @@ export default function DateToolbar({
         <div className="flex items-center gap-1">
           {/* PREV CURRENT WATCH */}
           <button 
-            onClick={() => { const occ = findWatchOccurrence(onDutyWatch, operativeDate, 'prev'); if (occ) handleSetOpTime(occ); }}
+            onClick={() => { 
+              // Find previous shift for the CURRENT on-duty watch
+              const occ = findWatchOccurrence(onDutyWatch, operativeDate, 'prev', operativeShift); 
+              // If it's the same day, force go back further
+              if (occ.date.toDateString() === operativeDate.toDateString()) {
+                const dayBefore = new Date(operativeDate.getTime() - 86400000);
+                handleSetOpTime(findWatchOccurrence(onDutyWatch, dayBefore, 'prev', operativeShift));
+              } else {
+                handleSetOpTime(occ);
+              }
+            }}
             className="flex flex-col items-center justify-center h-10 rounded text-white shadow-sm hover:opacity-90 transition-all w-20"
             style={{ backgroundColor: getWatchColor(onDutyWatch) }}
           >
@@ -95,7 +105,7 @@ export default function DateToolbar({
             style={{ backgroundColor: getWatchColor(prevShiftWatch) }}
           >
             {prevShiftType === 'Day' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-            <span className="text-[11px] font-black uppercase">{prevShiftDate.getUTCDate().toString().padStart(2, '0')}</span>
+            <span className="text-[11px] font-black uppercase">{prevShiftDate.getDate().toString().padStart(2, '0')}</span>
           </button>
 
           {/* CURRENT SHIFT BUTTON */}
@@ -103,7 +113,7 @@ export default function DateToolbar({
                style={{ backgroundColor: getWatchColor(onDutyWatch), borderColor: `${getWatchColor(onDutyWatch)}90` }}>
             {operativeShift === 'Day' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             <span className="text-[11px] font-black uppercase whitespace-nowrap">
-              {operativeDate.toLocaleDateString('en-GB', { weekday: 'short' }).toUpperCase()} {operativeDate.getUTCDate().toString().padStart(2, '0')} {operativeDate.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase()}
+              {operativeDate.toLocaleDateString('en-NZ', { weekday: 'short' }).toUpperCase()} {operativeDate.getDate().toString().padStart(2, '0')} {operativeDate.toLocaleDateString('en-NZ', { month: 'short' }).toUpperCase()}
             </span>
           </div>
 
@@ -114,12 +124,22 @@ export default function DateToolbar({
             style={{ backgroundColor: getWatchColor(nextShiftWatch) }}
           >
             {nextShiftType === 'Day' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-            <span className="text-[11px] font-black uppercase">{nextShiftDate.getUTCDate().toString().padStart(2, '0')}</span>
+            <span className="text-[11px] font-black uppercase">{nextShiftDate.getDate().toString().padStart(2, '0')}</span>
           </button>
 
           {/* NEXT CURRENT WATCH */}
           <button 
-            onClick={() => { const occ = findWatchOccurrence(onDutyWatch, operativeDate, 'next'); if (occ) handleSetOpTime(occ); }}
+            onClick={() => { 
+              // Find next shift for the CURRENT on-duty watch
+              const occ = findWatchOccurrence(onDutyWatch, operativeDate, 'next', operativeShift); 
+              // If it's the same day, force go forward further
+              if (occ.date.toDateString() === operativeDate.toDateString()) {
+                const dayAfter = new Date(operativeDate.getTime() + 86400000);
+                handleSetOpTime(findWatchOccurrence(onDutyWatch, dayAfter, 'next', operativeShift));
+              } else {
+                handleSetOpTime(occ);
+              }
+            }}
             className="flex flex-col items-center justify-center h-10 rounded text-white shadow-sm hover:opacity-90 transition-all w-20"
             style={{ backgroundColor: getWatchColor(onDutyWatch) }}
           >
@@ -147,7 +167,7 @@ export default function DateToolbar({
       {/* CURRENT DATE STATUS ON FAR RIGHT */}
       <div className="flex items-center gap-3 pr-4 border-l border-blue-300/30 pl-6">
         <span className="text-[10px] font-black text-blue-800/50 uppercase tracking-tighter">Current:</span>
-        <span className="text-[11px] font-black text-blue-900 whitespace-nowrap">{operativeDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+        <span className="text-[11px] font-black text-blue-900 whitespace-nowrap">{operativeDate.toLocaleDateString('en-NZ', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
         {operativeShift === 'Day' ? <Sun className="w-3.5 h-3.5 text-orange-500" /> : <Moon className="w-3.5 h-3.5 text-blue-600" />}
       </div>
 

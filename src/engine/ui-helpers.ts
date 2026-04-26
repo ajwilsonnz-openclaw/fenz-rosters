@@ -22,8 +22,38 @@ export function getOperationalTime(realDate: Date): { date: Date; shift: 'Day' |
   }
 }
 
-export function getCalendarDays(date: Date, shift: 'Day' | 'Night'): ({ date: Date; day: number; color: string } | null)[] {
-  return [];
+export function getCalendarDays(viewDate: Date, shift: 'Day' | 'Night'): ({ date: Date; day: number; color: string } | null)[] {
+  const year = viewDate.getUTCFullYear();
+  const month = viewDate.getUTCMonth();
+  
+  // First day of month
+  const firstDay = new Date(Date.UTC(year, month, 1));
+  const startingDayOfWeek = firstDay.getUTCDay(); // 0 (Sun) to 6 (Sat)
+  
+  // Total days in month
+  const lastDay = new Date(Date.UTC(year, month + 1, 0));
+  const totalDays = lastDay.getUTCDate();
+  
+  const days: ({ date: Date; day: number; color: string } | null)[] = [];
+  
+  // Padding for start of month
+  for (let i = 0; i < startingDayOfWeek; i++) {
+    days.push(null);
+  }
+  
+  // Fill in days
+  for (let d = 1; d <= totalDays; d++) {
+    const date = new Date(Date.UTC(year, month, d));
+    const { getOnDutyWatch } = require('./watch-math');
+    const onDutyWatch = getOnDutyWatch(date, shift);
+    days.push({
+      date,
+      day: d,
+      color: getWatchColor(onDutyWatch)
+    });
+  }
+  
+  return days;
 }
 
 export const REGIONS = [

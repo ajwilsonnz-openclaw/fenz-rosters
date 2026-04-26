@@ -10,6 +10,7 @@ import { getOperationalTime, getWatchColor, getCalendarDays, REGIONS, REGION_TO_
 import { Watch, getCallbackType, getOnDutyWatch, findWatchOccurrence } from '@/engine/watch-math';
 import Sidebar from "@/components/layout/Sidebar";
 import DateToolbar from "@/components/layout/DateToolbar";
+import Header from "@/components/layout/Header";
 import Link from 'next/link';
 
 
@@ -234,6 +235,10 @@ function RostersContent() {
       />
 
       <div className="flex-1 flex flex-col overflow-hidden bg-white">
+        
+        {/* TOP HEADER */}
+        <Header title="AVAILABLE CANDIDATES" />
+
         <DateToolbar 
           operativeDate={operativeDate}
           operativeShift={operativeShift}
