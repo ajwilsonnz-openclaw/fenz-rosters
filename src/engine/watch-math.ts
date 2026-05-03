@@ -69,13 +69,13 @@ export function getCallbackType(watch: Watch, date: Date): CallbackType {
   const idx = getCycleIndex(watch, date);
   
   switch (idx) {
-    case 7: // Off 4 — this is the day before Day 1 → Callback #1
+    case 7: // Off 4 → day before Day 1 → Callback #1
       return '#1-BeforeDay1';
-    case 1: // Day 2 → Callback #2a (evening of Day 2)
+    case 1: // Day 2 → evening of Day 2 → Callback #2a
       return '#2a-EveningDay2';
-    case 2: // Night 1 → Callback #2b (day of Night 1)
+    case 2: // Night 1 → day of Night 1 → Callback #2b
       return '#2b-DayOfNight1';
-    case 3: // Night 2 → Callback #3 (night after last night)
+    case 4: // Off 1 → night after finishing Night 2 → Callback #3
       return '#3-AfterLastNight';
     default:
       return null;
@@ -113,18 +113,53 @@ export function getLeaveNumber(watch: Watch, date: Date): number {
   return Math.floor(cyclePos / 16) + 1;
 }
 
-/**
- * Check if a firefighter is eligible for OT on a given date.
- * Must NOT be: on leave, on a working day that would exceed 24h
- */
-export function isEligibleForOT(
-  watch: Watch,
-  date: Date,
-): boolean {
-  if (isOnLeave(watch, date)) return false;
-  // Additional 24h compliance checks happen at allocation time
-  // (need to know what other OTs this person is already assigned to)
-  return true;
+export function canDoOT(
+  ff: { watch: Watch }, 
+  date: string | Date, 
+  requestShiftType: 'Day' | 'Night'
+): { pass: boolean; reason: string } {
+  const d = typeof date === 'string' ? parseLocalDate(date) : date;
+  const watch = ff.watch as Watch;
+
+  // 1. On Leave
+  if (isOnLeave(watch, d)) {
+    return { pass: false, reason: "On Leave" };
+  }
+
+  const shift = getShift(watch, d);
+  const cb = getCallbackType(watch, d);
+
+  // 2. Already working this exact shift?
+  if (shift === requestShiftType) {
+    return { pass: false, reason: `Already working regular ${shift} shift` };
+  }
+
+  // 3. Callback Exemptions (Allow 24h shifts for valid callbacks)
+  // FENZ rules allow working 24h if it's a designated callback window
+  const isCorrectCallback = (
+    (cb === '#1-BeforeDay1' && requestShiftType === 'Day') ||
+    (cb === '#2a-EveningDay2' && requestShiftType === 'Night') ||
+    (cb === '#2b-DayOfNight1' && requestShiftType === 'Day') ||
+    (cb === '#3-AfterLastNight' && requestShiftType === 'Night')
+  );
+
+  if (isCorrectCallback) {
+    return { pass: true, reason: "Callback-eligible" };
+  }
+
+  // 4. Non-Callback Fatigue Rules (No 24h shifts)
+  
+  // Rule: If working a regular shift today, cannot do the "other" OT shift (prevents 24h)
+  if (shift !== 'Off') {
+     return { pass: false, reason: `Regular ${shift} shift prevents ${requestShiftType} OT (24h limit)` };
+  }
+
+  // Rule: Cannot work Day OT if you just finished Night 2 (Specific fatigue)
+  if (cb === '#3-AfterLastNight' && requestShiftType === 'Day') {
+    return { pass: false, reason: "Just finished Nights - Day OT excluded" };
+  }
+
+  return { pass: true, reason: "Watch-eligible" };
 }
 
 /**

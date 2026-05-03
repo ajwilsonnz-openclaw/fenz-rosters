@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPool } from '@/lib/db';
-import { loadAllFirefighters, loadDistanceMatrix, allocateV2, type Firefighter } from '@/engine/allocation-engine-v2';
+import { allocateV2, type Firefighter } from '@/engine/allocation-engine-v2';
+import { loadAllFirefighters, loadDistanceMatrix } from '@/engine/allocation-engine';
 import { seedDatabase } from '@/lib/seed';
 
 export const dynamic = 'force-dynamic';
@@ -90,7 +91,8 @@ export async function POST(request: NextRequest) {
     const distanceMatrix = await loadDistanceMatrix(pool);
 
     // Build OT requests (v2 format)
-    const requests = SCENARIO.stations.map(st => ({
+    const requests = SCENARIO.stations.map((st, i) => ({
+      id: i + 1,
       station_id: stationIdMap[st.stationName],
       station_name: st.stationName,
       district: stationDistrictMap[st.stationName],
@@ -139,7 +141,7 @@ export async function POST(request: NextRequest) {
     const watchSummary: Record<string, { label: string; type: string; callback: string | null; shift: string; eligible: number; assigned: number }> = {};
 
     for (const watch of WATCH_ORDER) {
-      const watchFFs = allFirefighters.filter(ff => ff.watch === watch);
+      const watchFFs = allFirefighters.filter((ff: any) => ff.watch === watch);
       const shift = getShift(watch as any, date);
       const callback = getCallbackType(watch as any, date);
       const shiftLabel = shift === 'Off' ? 'Off' : shift === 'Day' ? 'Day shift' : 'Night shift';
@@ -158,7 +160,7 @@ export async function POST(request: NextRequest) {
         callback: callback || null,
         shift: shiftLabel,
         eligible,
-        assigned: Array.from(assignmentMap.entries()).filter(([id]) => watchFFs.some(f => f.id === id)).length,
+        assigned: Array.from(assignmentMap.entries()).filter(([id]) => watchFFs.some((f: any) => f.id === id)).length,
       };
     }
 
@@ -175,7 +177,7 @@ export async function POST(request: NextRequest) {
         complete: sr.assignedFirefighters.length >= sr.slots,
         phasesUsed: sr.phasesUsed,
         assigned: sr.assignedFirefighters.map(af => {
-          const ff = allFirefighters.find(f => f.id === af.firefighter_id)!;
+          const ff = allFirefighters.find((f: any) => f.id === af.firefighter_id)!;
           return {
             name: af.firefighter_name,
             district: ff?.district || '?',
@@ -210,7 +212,7 @@ export async function POST(request: NextRequest) {
       'ood-dist-cb': 5, 'ood-dist-nc': 6, 'so': 7, 'sso': 8, 'sso-overflow': 9, unassigned: 98,
     };
 
-    const allFirefightersDetail = allFirefighters.map(ff => {
+    const allFirefightersDetail = allFirefighters.map((ff: any) => {
       const a = assignmentMap.get(ff.id);
       const quals = Object.keys(ff.qualifications).filter(k => ff.qualifications[k]);
       return {
@@ -234,7 +236,7 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    allFirefightersDetail.sort((a, b) => {
+    allFirefightersDetail.sort((a: any, b: any) => {
       if (a.isAssigned !== b.isAssigned) return a.isAssigned ? -1 : 1;
       const pd = (PHASE_PRIORITY[a.phase] || 99) - (PHASE_PRIORITY[b.phase] || 99);
       if (pd !== 0) return pd;

@@ -1,0 +1,23 @@
+{
+    "name": "FENZ Overtime",
+    "short_name": "FENZ OT",
+    "description": "Fire and Emergency NZ Overtime Allocation",
+    "start_url": "/offers",
+    "display": "standalone",
+    "background_color": "#f8fafc",
+    "theme_color": "#005DAC",
+    "icons": [
+        {
+            "src": "/fenz-logo.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/fenz-logo.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ]
+}

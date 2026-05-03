@@ -1,64 +1,234 @@
-import { query, getPool } from '@/lib/db';
-import { NextResponse } from 'next/server';
-import { loadAllFirefighters, loadDistanceMatrix, allocateForOTRequest, type OTRequest } from '@/engine/allocation-engine';
+import { NextRequest, NextResponse } from 'next/server';
+import { allocateV2, type OTRequest, type Firefighter, type DistanceMatrix } from '@/engine/allocation-engine-v2';
+import { supabase } from '@/lib/supabase';
 
-export async function POST(request: Request) {
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: NextRequest) {
   try {
-    const body = await request.json().catch(() => ({}));
+    const body = await request.json();
 
     if (body.action === 'create_request') {
-      const res = await query(
-        `INSERT INTO ot_requests (station_id, date, shift_type, specialist_type, number_of_slots, required_qualification_ids, status, number_filled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 'pending', 0, NOW(), NOW()) RETURNING *`,
-        [body.station_id, body.date, body.shift_type, body.specialist_type || null, body.number_of_slots || 1, JSON.stringify(body.required_qualification_ids || [])]
-      );
-      return NextResponse.json({ success: true, request: res.rows[0] });
+      const { data, error } = await supabase.from('ot_requests').insert({
+        station_id: body.station_id,
+        district: body.district || '',
+        date: body.date,
+        shift_type: body.shift_type,
+        specialist_type: body.specialist_type || null,
+        number_of_slots: body.number_of_slots || 1,
+        required_qualification_ids: body.required_qualification_ids || [],
+        status: 'pending',
+        number_filled: 0
+      }).select().single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, request: data });
     }
 
     if (body.action === 'run_allocation') {
-      const pool = getPool();
-      const allFFs = await loadAllFirefighters(pool);
-      const distMatrix = await loadDistanceMatrix(pool);
-      const otReq: OTRequest[] = [{
-        station_id: 1055,
-        station_name: 'Albany',
-        district: 'Waitemata',
-        date: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0],
-        shift_type: 'Day',
-        slots: 3,
-        specialist_type: null,
-      }];
-      const stationResults = await allocateForOTRequest(otReq, allFFs, distMatrix, new Set());
+      const { date, shift_type } = body;
+
+      const { data: reqs, error: reqErr } = await supabase.from('ot_requests')
+        .select('*, stations(name, district)')
+        .eq('date', date)
+        .eq('shift_type', shift_type)
+        .eq('status', 'pending');
+
+      if (reqErr) throw reqErr;
+      if (!reqs || reqs.length === 0) return NextResponse.json({ success: true, message: 'No pending requests', stationResults: [] });
+
+      const requestIds = reqs.map((r: any) => r.id);
+
+      // --- NEW: FETCH EXISTING OFFERS TO BUILD EXCLUSIONS AND REDUCE SLOTS ---
+      const { data: existingOffers } = await supabase.from('ot_offers')
+        .select('ot_request_id, firefighter_id, status')
+        .in('ot_request_id', requestIds);
+
+      const requestExclusions: Record<number, Set<number>> = {};
+      const activeOffersCount: Record<number, number> = {};
+
+      existingOffers?.forEach((offer: any) => {
+        // Exclude FF from being evaluated again for this specific request 
+        // (if they declined, or already have a sent offer)
+        if (!requestExclusions[offer.ot_request_id]) {
+          requestExclusions[offer.ot_request_id] = new Set();
+        }
+        requestExclusions[offer.ot_request_id].add(offer.firefighter_id);
+
+        // If the offer is currently pending, it temporarily occupies a slot
+        if (offer.status === 'sent') {
+          activeOffersCount[offer.ot_request_id] = (activeOffersCount[offer.ot_request_id] || 0) + 1;
+        }
+      });
+
+      const otReqs: OTRequest[] = reqs.map((r: any) => {
+        const rank = (r.specialist_type === 'FF' || r.specialist_type === 'SO' || r.specialist_type === 'SSO' || r.specialist_type === 'SO_OR_SSO') ? r.specialist_type : 'FF';
+        const rawQuals = typeof r.required_qualification_ids === 'string' ? JSON.parse(r.required_qualification_ids) : (r.required_qualification_ids || []);
+        const cleanQuals = rawQuals.map((q: string) => q.toLowerCase());
+
+        // Calculate true remaining slots (Total - Accepted - Pending Offers)
+        const pendingOffers = activeOffersCount[r.id] || 0;
+        const availableSlots = r.number_of_slots - r.number_filled - pendingOffers;
+
+        return {
+          id: r.id,
+          station_id: r.station_id,
+          station_name: r.stations?.name || '',
+          district: r.stations?.district || '',
+          date: r.date,
+          shift_type: r.shift_type,
+          slots: Math.max(0, availableSlots),
+          specialist_type: null,
+          required_rank: rank,
+          required_qualifications: cleanQuals
+        };
+      }).filter(r => r.slots > 0); // Only pass requests that actually need candidates
+
+      if (otReqs.length === 0) {
+        return NextResponse.json({ success: true, message: 'All pending requests currently have active offers pending response.', stationResults: [] });
+      }
+
+      // --- NEW: IDENTIFY FFS WHO ARE ALREADY BUSY ON THIS DATE ---
+      const busyFFs = new Set<number>();
+
+      // --- NEW: FETCH DB AVAILABILITY FOR NON-CALLBACKS ---
+      const { data: dbAvailability } = await supabase.from('availability')
+        .select('firefighter_id')
+        .eq('date', date)
+        .eq('shift_type', shift_type);
+
+      const availableFFIds = new Set<number>();
+      dbAvailability?.forEach((a: any) => availableFFIds.add(a.firefighter_id));
+
+      // 1. Find FFs who are already assigned/accepted for this Date + Shift
+      const { data: busyAssignments } = await supabase.from('ot_assignments')
+        .select('firefighter_id, ot_requests!inner(date, shift_type)')
+        .eq('ot_requests.date', date)
+        .eq('ot_requests.shift_type', shift_type)
+        .in('status', ['assigned', 'accepted']);
+
+      busyAssignments?.forEach((a: any) => busyFFs.add(a.firefighter_id));
+
+      // 2. Find FFs who already have a pending offer for this Date + Shift (for a different request)
+      const { data: busyPendingOffers } = await supabase.from('ot_offers')
+        .select('firefighter_id, ot_requests!inner(date, shift_type)')
+        .eq('ot_requests.date', date)
+        .eq('ot_requests.shift_type', shift_type)
+        .eq('status', 'sent');
+
+      busyPendingOffers?.forEach((o: any) => busyFFs.add(o.firefighter_id));
+
+      // Fetch Firefighters
+      const { data: ffData, error: ffErr } = await supabase.from('firefighters').select('*, stations(name, area_id, district)').eq('is_active', true);
+      if (ffErr) throw ffErr;
+
+      const allFFs: Firefighter[] = (ffData || []).map((ff: any) => ({
+        ...ff, station_name: ff.stations?.name || '', district: ff.stations?.district || '', area_id: ff.stations?.area_id || 0,
+        qualifications: typeof ff.qualifications === 'string' ? JSON.parse(ff.qualifications) : (ff.qualifications || {}),
+        preferences: typeof ff.preferences === 'string' ? JSON.parse(ff.preferences) : (ff.preferences || { districts: [], stations: [] })
+      }));
+
+      // Fetch Distances
+      const { data: stationsData } = await supabase.from('stations').select('id, name');
+      const nameToId: Record<string, number> = {};
+      stationsData?.forEach((s: any) => { nameToId[s.name] = s.id; });
+
+      const { data: distData, error: distErr } = await supabase.from('station_distances').select('*');
+      if (distErr) throw distErr;
+
+      const distMatrix: DistanceMatrix = {};
+      distData?.forEach((d: any) => {
+        const distObj: Record<number, number> = {};
+        const distances = typeof d.distances === 'string' ? JSON.parse(d.distances) : d.distances;
+        for (const [stationName, km] of Object.entries(distances)) {
+          const targetId = nameToId[stationName];
+          if (targetId) distObj[targetId] = Number(km);
+        }
+        distMatrix[d.station_id] = distObj;
+      });
+
+      // RUN ENGINE (Passing busyFFs and requestExclusions)
+      const stationResults = await allocateV2(otReqs, allFFs, distMatrix, busyFFs, requestExclusions, availableFFIds);
+
+      // --- NEW: WRITE TO OFFERS INSTEAD OF ASSIGNMENTS ---
+      for (const res of stationResults) {
+        if (res.assignedFirefighters.length === 0) continue;
+
+        for (const af of res.assignedFirefighters) {
+          // Set offer expiration to 2 hours from now
+          const deadline = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+
+          await supabase.from('ot_offers').insert({
+            ot_request_id: res.requestId,
+            firefighter_id: af.firefighter_id,
+            status: 'sent',
+            offered_at: new Date().toISOString(),
+            deadline: deadline,
+            metadata: {
+              distance_km: af.distance,
+              cascadePhase: af.cascadePhase,
+              must_might_wont: af.threshold
+            }
+          });
+        }
+
+        // Note: We deliberately DO NOT update the ot_requests.number_filled here.
+        // number_filled will only update when an offer is formally Accepted.
+      }
+
       return NextResponse.json({ success: true, stationResults });
+    }
+
+    if (body.action === 'remove_assignment') {
+      const { assignmentId, requestId } = body;
+      await supabase.from('ot_assignments').delete().eq('id', assignmentId);
+      const { data: req } = await supabase.from('ot_requests').select('number_filled').eq('id', requestId).single();
+      if (req) await supabase.from('ot_requests').update({ number_filled: Math.max(0, req.number_filled - 1), status: 'pending' }).eq('id', requestId);
+      return NextResponse.json({ success: true });
+    }
+
+    if (body.action === 'delete_request') {
+      const { requestId } = body;
+      // Cleanup associated offers and assignments
+      await supabase.from('ot_offers').delete().eq('ot_request_id', requestId);
+      await supabase.from('ot_assignments').delete().eq('ot_request_id', requestId);
+      const { error } = await supabase.from('ot_requests').delete().eq('id', requestId);
+      if (error) throw error;
+      return NextResponse.json({ success: true });
+    }
+
+    if (body.action === 'execute_pullback') {
+      const { oldAssignmentId, oldRequestId, newRequestId, ffId } = body;
+      await supabase.from('ot_assignments').delete().eq('id', oldAssignmentId);
+
+      const { data: oldReq } = await supabase.from('ot_requests').select('number_filled').eq('id', oldRequestId).single();
+      if (oldReq) await supabase.from('ot_requests').update({ number_filled: Math.max(0, oldReq.number_filled - 1), status: 'pending' }).eq('id', oldRequestId);
+
+      const { data: newAssign } = await supabase.from('ot_assignments').insert({
+        ot_request_id: newRequestId, firefighter_id: ffId, distance_km: 0, status: 'assigned', assigned_at: new Date().toISOString()
+      }).select().single();
+
+      const { data: newReq } = await supabase.from('ot_requests').select('number_filled, number_of_slots').eq('id', newRequestId).single();
+      if (newReq) {
+        const filled = newReq.number_filled + 1;
+        await supabase.from('ot_requests').update({ number_filled: filled, status: filled >= newReq.number_of_slots ? 'allocated' : 'pending' }).eq('id', newRequestId);
+      }
+      return NextResponse.json({ success: true, assignment: newAssign });
     }
 
     if (body.action === 'manual_assign') {
       const { requestId, firefighterId, distance, status, declineReason } = body;
-      const res = await query(
-        `INSERT INTO ot_assignments (ot_request_id, firefighter_id, distance_km, status, assigned_at, declined_reason)
-         VALUES ($1, $2, $3, $4, NOW(), $5)
-         RETURNING *`,
-        [requestId, firefighterId, distance || 0, status || 'assigned', declineReason || null]
-      );
-      
-      // If we are assigning, increment number_filled on the request
+      const { data: assignment, error: insError } = await supabase.from('ot_assignments').insert({
+        ot_request_id: requestId, firefighter_id: firefighterId, distance_km: distance || 0,
+        status: status || 'assigned', assigned_at: new Date().toISOString(), declined_reason: declineReason || null,
+        must_might_wont: 'manual'
+      }).select().single();
+      if (insError) throw insError;
       if ((status || 'assigned') !== 'declined') {
-        await query(`UPDATE ot_requests SET number_filled = number_filled + 1 WHERE id = $1`, [requestId]);
+        const { data: req } = await supabase.from('ot_requests').select('number_filled').eq('id', requestId).single();
+        if (req) await supabase.from('ot_requests').update({ number_filled: req.number_filled + 1 }).eq('id', requestId);
       }
-      
-      return NextResponse.json({ success: true, assignment: res.rows[0] });
-    }
-
-    if (body.action === 'update_assignment') {
-      const { assignmentId, assignmentAction, declineReason } = body;
-      if (assignmentAction === 'accept') {
-        await query(`UPDATE ot_assignments SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [assignmentId]);
-        return NextResponse.json({ success: true, status: 'accepted' });
-      }
-      if (assignmentAction === 'decline') {
-        await query(`UPDATE ot_assignments SET status = 'declined', declined_reason = $2 WHERE id = $1`, [assignmentId, declineReason || '']);
-        return NextResponse.json({ success: true, status: 'declined' });
-      }
-      return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 });
+      return NextResponse.json({ success: true, assignment });
     }
 
     return NextResponse.json({ success: false, error: 'Unknown action' }, { status: 400 });

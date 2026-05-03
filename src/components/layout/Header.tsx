@@ -9,23 +9,24 @@ interface HeaderProps {
 
 export default function Header({ title = "Vacancy Management" }: HeaderProps) {
   const [time, setTime] = useState(new Date());
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
   return (
-    <header className="h-16 bg-[#0A0A3D] border-b border-blue-900/30 flex items-center justify-between shrink-0">
+    <header className="h-20 bg-[#0A0A3D] border-b border-blue-900/30 flex items-center justify-between shrink-0">
       <div className="h-full flex items-center">
         {/* LOGO SECTION - Hits top and bottom */}
         <div className="h-full px-6 flex items-center gap-4 bg-[#0B0B45]">
-          <div className="h-12 w-12 flex-shrink-0">
+          <div className="h-20 w-20 flex-shrink-0">
             <img src="/fenz-logo.svg" alt="FENZ Logo" className="w-full h-full object-contain" />
           </div>
           <div className="flex flex-col">
-            <h1 className="text-xl font-black italic leading-none tracking-tighter text-white">FENZ</h1>
-            <p className="text-[8px] font-bold text-blue-300 uppercase tracking-widest mt-0.5">Rosters</p>
+            <h1 className="text-2xl font-black italic leading-none tracking-tighter text-white uppercase">Rosters</h1>
           </div>
         </div>
 
@@ -36,10 +37,14 @@ export default function Header({ title = "Vacancy Management" }: HeaderProps) {
 
       <div className="flex items-center gap-6 px-8">
         {/* CLOCK */}
-        <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-950/50 rounded-full border border-blue-800/30">
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-950/50 rounded-full border border-blue-800/30 min-w-[200px] justify-center">
           <Clock className="w-3.5 h-3.5 text-blue-400" />
-          <span className="text-[10px] font-black text-blue-100 uppercase tracking-widest">
-            {time.toLocaleDateString('en-NZ', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()} {time.toLocaleTimeString('en-NZ', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+          <span className="text-[10px] font-black text-blue-100 uppercase tracking-widest tabular-nums">
+            {!mounted ? '-- --- ---- --:--:--' : (
+              <>
+                {time.toLocaleDateString('en-NZ', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()} {time.toLocaleTimeString('en-NZ', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+              </>
+            )}
           </span>
         </div>
 

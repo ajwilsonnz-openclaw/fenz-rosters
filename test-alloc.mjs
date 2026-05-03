@@ -5,7 +5,7 @@ const pool = new Pool({ host: '127.0.0.1', port: 5432, database: 'fenz_ot', user
 
 try {
   const requests = [
-    { station_id: 320, station_name: 'Albany', district: 'Waitemata', date: '2026-04-22', shift_type: 'Day', slots: 2, specialist_type: null }
+    { station_id: 1485, station_name: 'Albany', district: 'Waitemata', date: '2026-04-22', shift_type: 'Day', slots: 2, specialist_type: null }
   ];
   const result = await runAllocation(requests, pool);
   console.log(JSON.stringify(result, null, 2));

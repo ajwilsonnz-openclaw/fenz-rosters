@@ -13,8 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FENZ Overtime Allocation",
+  title: "Rosters",
   description: "FENZ Overtime Allocation Engine - Fair, transparent roster management for New Zealand firefighters",
+  icons: {
+    icon: "/fenz-logo.svg",
+  },
 };
 
 export default function RootLayout({

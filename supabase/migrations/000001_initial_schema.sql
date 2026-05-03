@@ -25,14 +25,14 @@ CREATE TABLE IF NOT EXISTS stations (
 );
 
 -- ============================================================
--- STATION DISTANCES
+-- STATION DISTANCES (Distance Matrix per station)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS station_distances (
     id SERIAL PRIMARY KEY,
-    station_id INTEGER REFERENCES stations(id),
-    other_station_id INTEGER REFERENCES stations(id),
-    distance_km FLOAT NOT NULL DEFAULT 0,
-    UNIQUE(station_id, other_station_id)
+    station_id INTEGER REFERENCES stations(id) UNIQUE,
+    district VARCHAR(50),
+    distances JSONB NOT NULL DEFAULT '{}', -- Key: target station name or ID, Value: distance in KM
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================
@@ -48,8 +48,15 @@ CREATE TABLE IF NOT EXISTS firefighters (
     rank VARCHAR(20) NOT NULL DEFAULT 'FF', -- FF, QFF, SFF, SO, SSO
     ot_count_days INTEGER NOT NULL DEFAULT 0,
     ot_count_nights INTEGER NOT NULL DEFAULT 0,
+    ot_count_callback_days INTEGER NOT NULL DEFAULT 0,
+    ot_count_callback_nights INTEGER NOT NULL DEFAULT 0,
+    ot_count_noncallback_days INTEGER NOT NULL DEFAULT 0,
+    ot_count_noncallback_nights INTEGER NOT NULL DEFAULT 0,
+    want_to_work_day BOOLEAN DEFAULT TRUE,
+    want_to_work_night BOOLEAN DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
     qualifications JSONB DEFAULT '{}', -- e.g., {"driver": true, "prt": true, "type4": false}
+    preferences JSONB DEFAULT '{"districts": [], "stations": []}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -134,7 +141,7 @@ CREATE TABLE IF NOT EXISTS availability (
 CREATE TABLE IF NOT EXISTS ot_count_log (
     id SERIAL PRIMARY KEY,
     firefighter_id INTEGER REFERENCES firefighters(id),
-    counter_type VARCHAR(20) NOT NULL, -- days, nights
+    counter_type VARCHAR(20) NOT NULL, -- days, nights, callback_days, callback_nights, etc.
     old_value INTEGER NOT NULL,
     new_value INTEGER NOT NULL,
     change_reason VARCHAR(255),

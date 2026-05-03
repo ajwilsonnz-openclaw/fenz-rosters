@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { LayoutDashboard, Users, UserCheck, ChevronDown, Check, Search, ShieldCheck } from 'lucide-react';
 import { REGIONS } from '@/engine/ui-helpers';
 
@@ -32,6 +32,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const router = useRouter();
   const path = usePathname();
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -40,10 +41,10 @@ export default function Sidebar({
 
   if (!mounted) return <div className="w-64 bg-[#0B0B45] border-r border-blue-900/30 flex-shrink-0" />; 
 
-  const navItems = [
-    { name: 'Create Vacancy', id: 'officer', icon: LayoutDashboard, route: '/officer' },
-    { name: 'Available', id: 'rosters', icon: Users, route: '/rosters', exact: true },
-    { name: 'Filled', id: 'filled', icon: UserCheck, route: '/rosters/filled' },
+  const navItems: { name: string; id: string; icon: any; route: string; exact?: boolean }[] = [
+    { name: 'Create Vacancy', id: 'vacancy', icon: LayoutDashboard, route: '/vacancy' },
+    { name: 'Available', id: 'available', icon: Users, route: '/available' },
+    { name: 'Filled', id: 'filled', icon: UserCheck, route: '/filled' },
   ];
 
   return (
@@ -108,8 +109,12 @@ export default function Sidebar({
           return (
             <button
               key={item.id}
-              onClick={() => router.push(item.route)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-black transition-all duration-300 uppercase tracking-widest border-l-4 ${
+              onClick={() => {
+                 // Keep the date & shift in the URL when navigating between pages
+                 const currentQuery = searchParams ? searchParams.toString() : '';
+                 router.push(`${item.route}${currentQuery ? `?${currentQuery}` : ''}`);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition-all duration-300 border-l-4 ${
                 isActive 
                   ? 'bg-[#1A1A5A] text-white border-blue-500 shadow-lg' 
                   : 'text-blue-300/70 border-transparent hover:text-white hover:bg-blue-800/30'

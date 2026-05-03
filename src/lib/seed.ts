@@ -38,49 +38,49 @@ export async function seedDatabase() {
   console.log('  ✅ Areas created');
 
   // --- 3. Stations (29 total) ---
-  const stationDefs: { name: string; areaId: number }[] = [
+  const stationDefs: { id: number; name: string; areaId: number }[] = [
     // Waitemata (11)
-    { name: 'Albany', areaId: waitemataId },
-    { name: 'Birkenhead', areaId: waitemataId },
-    { name: 'Devonport', areaId: waitemataId },
-    { name: 'East Coast Bays', areaId: waitemataId },
-    { name: 'Glen Eden', areaId: waitemataId },
-    { name: 'Henderson', areaId: waitemataId },
-    { name: 'Silverdale', areaId: waitemataId },
-    { name: 'Takapuna', areaId: waitemataId },
-    { name: 'Te Atatu', areaId: waitemataId },
-    { name: 'Titirangi', areaId: waitemataId },
-    { name: 'West Harbour', areaId: waitemataId },
+    { id: 1485, name: 'Albany', areaId: waitemataId },
+    { id: 1482, name: 'Birkenhead', areaId: waitemataId },
+    { id: 1481, name: 'Devonport', areaId: waitemataId },
+    { id: 1483, name: 'East Coast Bays', areaId: waitemataId },
+    { id: 1464, name: 'Glen Eden', areaId: waitemataId },
+    { id: 1465, name: 'Henderson', areaId: waitemataId },
+    { id: 1490, name: 'Silverdale', areaId: waitemataId },
+    { id: 1480, name: 'Takapuna', areaId: waitemataId },
+    { id: 1466, name: 'Te Atatu', areaId: waitemataId },
+    { id: 1469, name: 'Titirangi', areaId: waitemataId },
+    { id: 1467, name: 'West Harbour', areaId: waitemataId },
     // Auckland (11)
-    { name: 'Auckland City', areaId: aucklandId },
-    { name: 'Avondale', areaId: aucklandId },
-    { name: 'Balmoral', areaId: aucklandId },
-    { name: 'Ellerslie', areaId: aucklandId },
-    { name: 'Grey Lynn', areaId: aucklandId },
-    { name: 'Mount Roskill', areaId: aucklandId },
-    { name: 'Mount Wellington', areaId: aucklandId },
-    { name: 'Onehunga', areaId: aucklandId },
-    { name: 'Parnell', areaId: aucklandId },
-    { name: 'Remuera', areaId: aucklandId },
-    { name: 'St Heliers', areaId: aucklandId },
+    { id: 1420, name: 'Auckland City', areaId: aucklandId },
+    { id: 1460, name: 'Avondale', areaId: aucklandId },
+    { id: 1461, name: 'Balmoral', areaId: aucklandId },
+    { id: 1427, name: 'Ellerslie', areaId: aucklandId },
+    { id: 1426, name: 'Grey Lynn', areaId: aucklandId },
+    { id: 1462, name: 'Mount Roskill', areaId: aucklandId },
+    { id: 1423, name: 'Mount Wellington', areaId: aucklandId },
+    { id: 1422, name: 'Onehunga', areaId: aucklandId },
+    { id: 1425, name: 'Parnell', areaId: aucklandId },
+    { id: 1421, name: 'Remuera', areaId: aucklandId },
+    { id: 1424, name: 'St Heliers', areaId: aucklandId },
     // Counties Manukau (7)
-    { name: 'Howick', areaId: countiesManukauId },
-    { name: 'Mangere', areaId: countiesManukauId },
-    { name: 'Manurewa', areaId: countiesManukauId },
-    { name: 'Otahuhu', areaId: countiesManukauId },
-    { name: 'Otara', areaId: countiesManukauId },
-    { name: 'Papatoetoe', areaId: countiesManukauId },
-    { name: 'Papakura', areaId: countiesManukauId },
+    { id: 1432, name: 'Howick', areaId: countiesManukauId },
+    { id: 1435, name: 'Mangere', areaId: countiesManukauId },
+    { id: 1430, name: 'Manurewa', areaId: countiesManukauId },
+    { id: 1431, name: 'Otahuhu', areaId: countiesManukauId },
+    { id: 1433, name: 'Otara', areaId: countiesManukauId },
+    { id: 1434, name: 'Papatoetoe', areaId: countiesManukauId },
+    { id: 1438, name: 'Papakura', areaId: countiesManukauId },
   ];
 
   const stationIds: Record<string, number> = {};
   for (const def of stationDefs) {
     const res = await query(
-      `INSERT INTO stations (name, area_id, is_specialist, specialist_type) 
-       VALUES ($1, $2, false, NULL) 
-       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+      `INSERT INTO stations (id, name, area_id, is_specialist, specialist_type) 
+       VALUES ($1, $2, $3, false, NULL) 
+       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, area_id = EXCLUDED.area_id
        RETURNING id`,
-      [def.name, def.areaId]
+      [def.id, def.name, def.areaId]
     );
     stationIds[def.name] = res.rows[0].id;
   }
