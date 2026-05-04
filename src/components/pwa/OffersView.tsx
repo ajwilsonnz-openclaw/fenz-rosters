@@ -204,12 +204,14 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
 
             {/* DECLINE DIALOG */}
             <Dialog open={declineDialogOpen} onOpenChange={setDeclineDialogOpen}>
-                <DialogContent className="sm:max-w-xs rounded-2xl">
-                    <DialogHeader>
-                        <DialogTitle className="text-xl font-black text-slate-800">Decline Shift</DialogTitle>
-                        <DialogDescription className="text-xs font-medium">Please let us know why you are declining this offer.</DialogDescription>
+                <DialogContent className="sm:max-w-xs rounded-2xl p-0 overflow-hidden !bg-white border-none shadow-2xl">
+                    <DialogHeader className="p-6 !bg-white border-b shrink-0 text-center relative">
+                        <DialogTitle className="text-lg font-black text-slate-800 uppercase tracking-tight">Decline Shift</DialogTitle>
+                        <DialogDescription className="text-xs font-medium text-slate-500 mt-1">
+                            Please let us know why you are declining this offer.
+                        </DialogDescription>
                     </DialogHeader>
-                    <div className="flex flex-col gap-2 py-4">
+                    <div className="flex flex-col gap-2 p-6">
                         {DECLINE_REASONS.map(reason => (
                             <button
                                 key={reason}
@@ -230,7 +232,7 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
                             />
                         )}
                     </div>
-                    <DialogFooter className="flex flex-row gap-3 pt-4 border-t mt-4">
+                    <DialogFooter className="flex flex-row gap-3 p-6 pt-4 !bg-white border-t">
                         <Button variant="outline" onClick={() => setDeclineDialogOpen(false)} className="flex-1 py-6 rounded-xl text-slate-600 font-bold border-slate-200 shadow-sm bg-white hover:bg-slate-50">
                             Cancel
                         </Button>
