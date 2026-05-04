@@ -1,4 +1,4 @@
-// Allocation Debug Trace — step-by-step logging of the cascade engine
+// Allocation Debug Trace — step-by-step logging of the cascade engine (updated)
 
 import { getShift, getCallbackType, isOnLeave, getShiftStatus } from './watch-math';
 import type { Firefighter, OTRequest } from './allocation-engine';
