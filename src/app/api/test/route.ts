@@ -169,7 +169,7 @@ export async function POST(request: NextRequest) {
       const sc = SCENARIO.stations.find(s => s.stationName === sr.station_name)!;
       return {
         stationName: sr.station_name,
-        district: stationDistrictMap[sr.station_name],
+        district: stationDistrictMap[sr.station_name || 'Unknown'],
         slots: sr.slots,
         specialist: sr.specialist,
         requiredRank: sr.required_rank,
