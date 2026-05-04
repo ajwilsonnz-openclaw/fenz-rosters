@@ -122,12 +122,12 @@ export function getDistance(fromStationId: number, toStationId: number, matrix: 
 }
 
 // THE PRE-FLIGHT CHECK (Supply vs Demand)
-export function calculateSurplus(requests: OTRequest[], allFirefighters: Firefighter[], dateStr: string, shiftType: 'Day' | 'Night'): boolean {
+export function calculateSurplus(requests: OTRequest[], allFirefighters: Firefighter[], dateStr: string, shiftType: 'Day' | 'Night', availableFFMap: Map<number, Set<string>>): boolean {
   const ffDemand = requests.filter(r => r.required_rank === 'FF').reduce((sum, r) => sum + r.slots, 0);
   let ffSupply = 0;
   for (const ff of allFirefighters) {
     const isFF = ['FF', 'QFF', 'SFF'].includes(ff.rank);
-    if (isFF && ff.is_active && canDoOT(ff, dateStr, shiftType).pass) {
+    if (isFF && ff.is_active && canDoOT(ff, dateStr, shiftType).pass && availableFFMap.has(ff.id)) {
       ffSupply++;
     }
   }
@@ -252,7 +252,7 @@ export async function allocateV2(
   distanceMatrix: DistanceMatrix,
   existingAssigned: Set<number> = new Set(),
   requestExclusions: Record<number, Set<number>> = {},
-  availableFFIds: Set<number> = new Set(),
+  availableFFMap: Map<number, Set<string>> = new Map(),
 ): Promise<AllocationResult[]> {
 
   const globalAssigned = new Set<number>(existingAssigned);
@@ -277,7 +277,7 @@ export async function allocateV2(
   // Pre-Flight Check
   const dateStr = requests.length > 0 ? requests[0].date : new Date().toISOString();
   const shiftType = requests.length > 0 ? requests[0].shift_type : 'Day';
-  const isSurplus = calculateSurplus(requests, allFirefighters, dateStr, shiftType);
+  const isSurplus = calculateSurplus(requests, allFirefighters, dateStr, shiftType, availableFFMap);
   const orderedGroups = getExecutionOrder(isSurplus);
 
   for (const group of orderedGroups) {
@@ -297,21 +297,11 @@ export async function allocateV2(
 
         const requiredQuals = req.required_qualifications?.length > 0 ? req.required_qualifications : (req.specialist_type ? [req.specialist_type] : []);
         if (!checkQualifications(ff, requiredQuals)) continue;
-        if (!checkPreferences(ff, req.station_name, req.district)) continue;
-
-        const shift = getShiftForWatch(ff.watch, req.date);
-        const watchCb = getCallbackForWatch(ff.watch, req.date);
-        const isTrueCb = (
-          (watchCb === '#1-BeforeDay1' && req.shift_type === 'Day') ||
-          (watchCb === '#2a-EveningDay2' && req.shift_type === 'Night') ||
-          (watchCb === '#2b-DayOfNight1' && req.shift_type === 'Day') ||
-          (watchCb === '#3-AfterLastNight' && req.shift_type === 'Night')
-        );
-
-        if (!isTrueCb && shift === 'Off') {
-          const wantField = req.shift_type === 'Day' ? ff.want_to_work_day : ff.want_to_work_night;
-          if (!wantField) continue;
-        }
+        
+        // Assert firefighter opted-in via PWA availability
+        if (!availableFFMap.has(ff.id)) continue;
+        const allowedStations = availableFFMap.get(ff.id);
+        if (allowedStations && allowedStations.size > 0 && !allowedStations.has(String(req.station_id))) continue;
 
         const isHomeStation = ff.station_id === req.station_id;
         const distKm = getDistance(ff.station_id, req.station_id, distanceMatrix);

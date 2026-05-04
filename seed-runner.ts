@@ -1,5 +1,6 @@
 // Seed runner — uses tsx to execute TypeScript directly
-import 'dotenv/config';
+import { config } from 'dotenv';
+config({ path: '.env.local' });
 import { seedDatabase } from './src/lib/seed';
 
 async function main() {

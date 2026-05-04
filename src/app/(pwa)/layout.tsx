@@ -3,7 +3,10 @@
 import BottomNav from "@/components/layout/BottomNav";
 import Image from "next/image";
 import { User } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import PushSubscriber from "@/components/pwa/PushSubscriber";
 
 export default function PWALayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -11,10 +14,35 @@ export default function PWALayout({ children }: { children: React.ReactNode }) {
   // Dynamically set the title based on the current mobile tab
   let title = "FENZ OT";
   if (pathname === '/availability' || pathname === '/') title = "AVAILABILITY";
-  if (pathname === '/offers') title = "MY OFFERS";
+  if (pathname === '/offers') title = "OVERTIME OFFERS";
   if (pathname === '/confirmed') title = "MY ROSTER";
   if (pathname === '/profile') title = "PROFILE";
   if (pathname === '/notifications') title = "NOTIFICATIONS";
+
+  const router = useRouter();
+  const [isAuth, setIsAuth] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.push("/login");
+      } else {
+        setIsAuth(true);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) {
+        router.push("/login");
+      } else {
+        setIsAuth(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [router]);
+
+  if (!isAuth) return <div className="min-h-screen bg-slate-50" />;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -27,9 +55,8 @@ export default function PWALayout({ children }: { children: React.ReactNode }) {
             <Image
               src="/fenz-logo.svg"
               alt="FENZ Logo"
-              width={120}
-              height={28}
-              className="h-10 w-auto"
+              width={171}
+              height={40}
               priority
             />
           </div>
@@ -53,6 +80,7 @@ export default function PWALayout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
+      <PushSubscriber />
       <BottomNav />
     </div>
   );

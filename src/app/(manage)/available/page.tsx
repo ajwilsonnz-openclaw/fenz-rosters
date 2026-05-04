@@ -1,5 +1,6 @@
 'use client';
 
+
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname, } from 'next/navigation';
 import { Activity, Sun, Moon, Trash2 } from 'lucide-react';
@@ -51,7 +52,7 @@ function RostersContent() {
 
   const [loading, setLoading] = useState(true);
   const [stations, setStations] = useState<any[]>([]);
-  const [baselineData, setBaselineData] = useState<{ firefighters: any[], requests: any[], assignedIds: Set<number> }>({ firefighters: [], requests: [], assignedIds: new Set() });
+  const [baselineData, setBaselineData] = useState<{ firefighters: any[], requests: any[], assignedIds: Set<number>, availableIds: Set<number> }>({ firefighters: [], requests: [], assignedIds: new Set(), availableIds: new Set() });
 
   const [opTime, setOpTime] = useState(getOperationalTime(new Date()));
   const { date: operativeDate, shift: operativeShift } = opTime;
@@ -97,7 +98,10 @@ function RostersContent() {
       router.replace(`${pathname}?${newParams.toString()}`);
     }
 
-    setOpTime({ date: finalDate, shift: finalShift });
+    setOpTime(prev => {
+      if (prev.date.toDateString() === finalDate.toDateString() && prev.shift === finalShift) return prev;
+      return { date: finalDate, shift: finalShift };
+    });
     setTimeout(() => setIsHydrated(true), 0);
   }, [searchParams, pathname, router]);
 
@@ -123,10 +127,23 @@ function RostersContent() {
       const { data: assignmentData } = await supabase.from('ot_assignments').select('firefighter_id').eq('ot_requests.date', dateStr).eq('ot_requests.shift_type', operativeShift).neq('status', 'declined');
       const assignedIds = new Set(assignmentData?.map((a: any) => a.firefighter_id) || []);
 
+      const { data: availData } = await supabase.from('availability').select('firefighter_id').eq('date', dateStr).eq('shift_type', operativeShift);
+      const availableIds = new Set(availData?.map((a: any) => a.firefighter_id) || []);
+
       const mappedFF = (ffData || []).map(ff => {
         const station = Array.isArray(ff.stations) ? ff.stations[0] : ff.stations;
+        
+        const cbType = getCallbackType(ff.watch as Watch, operativeDate);
+        const isCb = (
+          (cbType === '#1-BeforeDay1' && operativeShift === 'Day') ||
+          (cbType === '#2b-DayOfNight1' && operativeShift === 'Day') ||
+          (cbType === '#2a-EveningDay2' && operativeShift === 'Night') ||
+          (cbType === '#3-AfterLastNight' && operativeShift === 'Night')
+        );
+
         return {
           ...ff,
+          isCallback: isCb,
           station_name: station?.name || 'Unknown',
           district: station?.district || ff.district || 'Unknown',
           otCount: (operativeShift === 'Day' ? ff.ot_count_days : ff.ot_count_nights) || 0,
@@ -145,7 +162,7 @@ function RostersContent() {
         };
       });
 
-      setBaselineData({ firefighters: mappedFF, requests: mappedRequests, assignedIds });
+      setBaselineData({ firefighters: mappedFF, requests: mappedRequests, assignedIds, availableIds });
       setLoading(false);
     }
     fetchData();
@@ -213,6 +230,8 @@ function RostersContent() {
     const elig = canDoOT(ff, dateStr, operativeShift);
 
     if (!elig.pass) return false;
+    
+    if (!baselineData.availableIds.has(ff.id)) return false;
 
     return true;
   }).sort((a: any, b: any) => {
@@ -331,9 +350,9 @@ function RostersContent() {
               <>
                 {/* 1. CALLBACK TABLE */}
                 <div className="flex-1 bg-white rounded-xl border border-gray-200 flex flex-col overflow-hidden">
-                  <div className="px-5 py-3 border-b flex items-center justify-between sticky top-0 z-10" style={{ backgroundColor: `${getWatchColor(onDutyWatch)}08`, borderBottomColor: `${getWatchColor(onDutyWatch)}20` }}>
-                    <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: getWatchColor(onDutyWatch) }}>
-                      Callback ({onDutyWatch?.toUpperCase() || 'NONE'} WATCH)
+                  <div className="px-5 py-3 border-b flex items-center justify-between sticky top-0 z-10" style={{ backgroundColor: `${callbackWatch ? getWatchColor(callbackWatch) : '#ccc'}08`, borderBottomColor: `${callbackWatch ? getWatchColor(callbackWatch) : '#ccc'}20` }}>
+                    <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: callbackWatch ? getWatchColor(callbackWatch) : '#ccc' }}>
+                      Callback ({callbackWatch?.toUpperCase() || 'NONE'} WATCH)
                     </span>
                   </div>
                   <div className="flex-1 overflow-y-auto">
@@ -394,7 +413,7 @@ function RostersContent() {
                           <tr key={p.id} className="hover:bg-gray-50/50 transition-colors opacity-70">
                             <td className="px-5 py-3">
                               <div className="flex items-center gap-3">
-                                <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase border border-gray-200 text-gray-500">{p.watch}</span>
+                                <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase border" style={{ backgroundColor: `${getWatchColor(p.watch)}15`, color: getWatchColor(p.watch), borderColor: `${getWatchColor(p.watch)}30` }}>{p.watch}</span>
                                 <div className="font-bold text-gray-800 text-xs">{p.first_name} {p.last_name}</div>
                               </div>
                             </td>

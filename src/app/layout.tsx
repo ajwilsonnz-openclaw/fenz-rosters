@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -13,11 +13,26 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rosters",
-  description: "FENZ Overtime Allocation Engine - Fair, transparent roster management for New Zealand firefighters",
+  title: "FENZ OT",
+  description: "FENZ Overtime Allocation Engine",
+  manifest: "/manifest.json",
   icons: {
     icon: "/fenz-logo.svg",
+    apple: "/fenz-logo.svg",
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "FENZ OT",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#005DAC",
 };
 
 export default function RootLayout({

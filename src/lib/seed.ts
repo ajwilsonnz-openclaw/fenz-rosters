@@ -235,7 +235,7 @@ console.log(` ✅ ${Object.keys(stationDistMaps).length} stations with distances
       [
         ff.first,
         ff.last,
-        `${ff.first.toLowerCase()}.${ff.last.toLowerCase().replace(/'/g, '')}@fenz.slack.com`,
+        `${ff.first.toLowerCase()}.${ff.last.toLowerCase().replace(/'/g, '')}@fireandemergency.nz`,
         stationIds[ff.station],
         ff.watch,
         ff.rank,

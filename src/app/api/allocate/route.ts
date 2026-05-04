@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { allocateV2, type OTRequest, type Firefighter, type DistanceMatrix } from '@/engine/allocation-engine-v2';
 import { supabase } from '@/lib/supabase';
+import webPush from 'web-push';
+
+if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webPush.setVapidDetails(
+        process.env.VAPID_SUBJECT || 'mailto:test@fireandemergency.nz',
+        process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY
+    );
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -91,14 +100,20 @@ export async function POST(request: NextRequest) {
       // --- NEW: IDENTIFY FFS WHO ARE ALREADY BUSY ON THIS DATE ---
       const busyFFs = new Set<number>();
 
-      // --- NEW: FETCH DB AVAILABILITY FOR NON-CALLBACKS ---
+      // --- NEW: FETCH DB AVAILABILITY ---
       const { data: dbAvailability } = await supabase.from('availability')
-        .select('firefighter_id')
+        .select('firefighter_id, preferences')
         .eq('date', date)
         .eq('shift_type', shift_type);
 
-      const availableFFIds = new Set<number>();
-      dbAvailability?.forEach((a: any) => availableFFIds.add(a.firefighter_id));
+      const availableFFMap = new Map<number, Set<string>>();
+      dbAvailability?.forEach((a: any) => {
+        let stIds = new Set<string>();
+        if (a.preferences && Array.isArray(a.preferences.stations)) {
+          stIds = new Set(a.preferences.stations.map(String));
+        }
+        availableFFMap.set(a.firefighter_id, stIds);
+      });
 
       // 1. Find FFs who are already assigned/accepted for this Date + Shift
       const { data: busyAssignments } = await supabase.from('ot_assignments')
@@ -148,7 +163,7 @@ export async function POST(request: NextRequest) {
       });
 
       // RUN ENGINE (Passing busyFFs and requestExclusions)
-      const stationResults = await allocateV2(otReqs, allFFs, distMatrix, busyFFs, requestExclusions, availableFFIds);
+      const stationResults = await allocateV2(otReqs, allFFs, distMatrix, busyFFs, requestExclusions, availableFFMap);
 
       // --- NEW: WRITE TO OFFERS INSTEAD OF ASSIGNMENTS ---
       for (const res of stationResults) {
@@ -168,6 +183,18 @@ export async function POST(request: NextRequest) {
               distance_km: af.distance,
               cascadePhase: af.cascadePhase,
               must_might_wont: af.threshold
+            }
+          });
+
+          // Fetch push subscription and send push notification async
+          supabase.from('push_subscriptions').select('subscription').eq('firefighter_id', af.firefighter_id).single().then(({ data }) => {
+            if (data?.subscription) {
+              const payload = JSON.stringify({
+                title: 'FENZ OT: New Offer',
+                body: `You have a new overtime offer for ${res.station_name}.`,
+                url: '/offers'
+              });
+              webPush.sendNotification(data.subscription, payload).catch(err => console.error("Web Push Error:", err));
             }
           });
         }

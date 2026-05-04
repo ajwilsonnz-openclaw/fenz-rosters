@@ -1,5 +1,6 @@
 'use client';
 
+
 import { useState, useEffect, Suspense, Fragment } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { getOperationalTime, getWatchColor } from '@/engine/ui-helpers';
@@ -122,7 +123,7 @@ function FilledContent() {
 
   const [stations, setStations] = useState<any[]>([]);
   const [filledAssignments, setFilledAssignments] = useState<any[]>([]);
-  const [baselineData, setBaselineData] = useState<{ firefighters: any[], requests: any[], distMatrix: any }>({ firefighters: [], requests: [], distMatrix: {} });
+  const [baselineData, setBaselineData] = useState<{ firefighters: any[], requests: any[], distMatrix: any, availableFFMap?: Map<number, Set<string>> }>({ firefighters: [], requests: [], distMatrix: {} });
   const [qualDict, setQualDict] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
@@ -201,6 +202,16 @@ function FilledContent() {
     const { data: ffData } = await supabase.from('firefighters').select(`*, stations (name, district)`).eq('is_active', true);
     const { data: reqData } = await supabase.from('ot_requests').select(`*, stations (name, district)`).eq('date', dateStr).eq('shift_type', operativeShift);
 
+    const { data: availData } = await supabase.from('availability').select('firefighter_id, preferences').eq('date', dateStr).eq('shift_type', operativeShift);
+    const availableFFMap = new Map<number, Set<string>>();
+    availData?.forEach((a: any) => {
+      let stIds = new Set<string>();
+      if (a.preferences && Array.isArray(a.preferences.stations)) {
+        stIds = new Set(a.preferences.stations.map(String));
+      }
+      availableFFMap.set(a.firefighter_id, stIds);
+    });
+
     const { data: assignmentData } = await supabase
       .from('ot_assignments')
       .select(`
@@ -262,7 +273,7 @@ function FilledContent() {
       return { ...r, required_rank: rank, required_qualifications: cleanQuals, station_name: r.stations?.name || '', district: r.stations?.district || '' };
     });
 
-    setBaselineData({ firefighters: mappedFF, requests: mappedReqs, distMatrix });
+    setBaselineData({ firefighters: mappedFF, requests: mappedReqs, distMatrix, availableFFMap });
     setLoading(false);
   };
 
@@ -311,7 +322,7 @@ function FilledContent() {
   const dateStr = [operativeDate.getFullYear(), String(operativeDate.getMonth() + 1).padStart(2, '0'), String(operativeDate.getDate()).padStart(2, '0')].join('-');
   const isDay = operativeShift === 'Day';
 
-  const isSurplus = calculateSurplus(baselineData.requests as any, baselineData.firefighters as any, dateStr, operativeShift);
+  const isSurplus = calculateSurplus(baselineData.requests as any, baselineData.firefighters as any, dateStr, operativeShift, baselineData.availableFFMap || new Map());
 
   const groupTables = DISPLAY_ORDER.map(groupId => {
     const group = GROUPS.find(g => g.id === groupId)!;

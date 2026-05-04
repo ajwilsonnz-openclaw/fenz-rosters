@@ -40,22 +40,8 @@ export default function DateToolbar({ operativeDate, operativeShift, setOpTime }
     setOpTime(newOpTime);
   };
 
-  useEffect(() => {
-    const urlDate = searchParams.get('date');
-    const urlShift = searchParams.get('shift');
-    if (urlDate && urlShift) {
-      const d = new Date(urlDate);
-      if (d.toDateString() !== operativeDate.toDateString() || urlShift !== operativeShift) {
-        setOpTime({ date: d, shift: urlShift as any });
-      }
-    } else {
-      const savedDate = sessionStorage.getItem('fenz_op_date');
-      const savedShift = sessionStorage.getItem('fenz_op_shift');
-      if (savedDate && savedShift) {
-        setOpTime({ date: new Date(savedDate), shift: savedShift as any });
-      }
-    }
-  }, [searchParams, operativeDate, operativeShift, setOpTime]);
+  // State initialization is handled entirely by the parent component (e.g. available/page.tsx)
+  // which is the single source of truth for the URL and sessionStorage state.
 
   // Logic calculations
   const onDutyWatch = getOnDutyWatch(operativeDate, operativeShift);
