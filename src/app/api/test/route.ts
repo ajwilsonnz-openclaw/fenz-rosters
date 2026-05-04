@@ -123,11 +123,11 @@ export async function POST(request: NextRequest) {
       totalAssigned += sr.assignedFirefighters.length;
       for (const af of sr.assignedFirefighters) {
         assignmentMap.set(af.firefighter_id, {
-          stationName: sr.station_name,
+          stationName: sr.station_name || 'Unknown',
           distance: af.distance,
           phase: af.cascadePhase,
           threshold: af.threshold,
-          group: af.assignedAtGroup,
+          group: (af as any).assignedAtGroup || 0,
         });
         allPhases.add(af.cascadePhase);
       }
