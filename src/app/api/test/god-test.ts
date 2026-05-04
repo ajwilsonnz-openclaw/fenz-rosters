@@ -13,13 +13,20 @@ async function main() {
     const targetShift = 'Day';
 
     // 1. Find ANY active firefighters to test with
-    console.log('Finding active firefighters...');
-    const { data: ffs } = await supabase.from('firefighters').select('id, email, rank, district_id').eq('is_active', true).limit(20);
+    console.log('Finding firefighters...');
+    const { data: ffs, error } = await supabase.from('firefighters').select('*').limit(20);
     
-    if (!ffs || ffs.length === 0) {
-        console.error('No active firefighters found in DB!');
+    if (error) {
+        console.error('Database Error:', error);
         return;
     }
+
+    if (!ffs || ffs.length === 0) {
+        console.error('Zero firefighters found in the table!');
+        return;
+    }
+
+    console.log(`Found ${ffs.length} users. Proceeding...`);
 
     // 2. Make them available
     console.log(`Setting ${ffs.length} users to Available for ${targetDate}...`);
