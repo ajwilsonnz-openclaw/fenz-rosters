@@ -33,7 +33,14 @@ export default function PushSubscriber() {
     }, []);
 
     const checkSubscription = async () => {
+        console.log("PushSubscriber: checking navigator.serviceWorker.ready...");
+        // Use a timeout to detect hangs
+        const timeout = setTimeout(() => console.warn("PushSubscriber: serviceWorker.ready is taking a long time..."), 5000);
+        
         const registration = await navigator.serviceWorker.ready;
+        clearTimeout(timeout);
+        console.log("PushSubscriber: serviceWorker is ready.");
+        
         const subscription = await registration.pushManager.getSubscription();
         setIsSubscribed(!!subscription);
         console.log("PushSubscriber: isSubscribed =", !!subscription);
