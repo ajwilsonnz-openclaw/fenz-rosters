@@ -68,7 +68,7 @@ export function getExecutionOrder() {
   return GROUPS.map(g => g.id);
 }
 
-export function getEligibleGroups(ff: Firefighter, req: OTRequest): any[] {
+export function getEligibleGroups(ff: Firefighter, req: OTRequest, isSurplus?: Record<number, number>): any[] {
   const eligible = [];
   const shift = getShiftForWatch(ff.watch, req.date);
   const cb = getCallbackForWatch(ff.watch, req.date);
