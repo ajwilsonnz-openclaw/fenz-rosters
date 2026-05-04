@@ -31,5 +31,9 @@ Multi-district overtime allocation system for **Fire and Emergency New Zealand (
 ### Medium Term
 - [x] **Authentication (Supabase Auth):** Implement secure login. **IMPORTANT:** Currently, `rebecca.taylor@fenz.slack.com` is hardcoded as a fallback in `(pwa)/availability/page.tsx`, `profile/page.tsx`, `confirmed/page.tsx`, and `offers/page.tsx`. This must be removed once Auth is active.
 - [ ] **Push Notifications:** Wire up the VAPID keys to send a real web-push ping when `ot_offers` are generated.
+- [ ] **Round-Based Allocation**: The system waits for all users in a round to reply before re-optimizing.
+- [ ] **Harsh & Efficient Logic**: Every rerun is a fresh start. If a better candidate is found, previous offers are withdrawn.
+- [ ] **Future Improvement (Admin Toggle)**: Add a 'Stability Weight' to the admin panel to allow favoring existing acceptances during reruns.
+- [ ] **D1-N2 Issuing Rules**: Admin can map specific callback windows to issuing shifts.
 - [ ] **Historical Analytics & Reporting.**
 - [ ] **Admin Manual Override Interface:** For handling leave/exceptional circumstances.
