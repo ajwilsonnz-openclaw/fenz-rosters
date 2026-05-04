@@ -5,7 +5,6 @@ import { Settings, Clock, Timer, Layers, ShieldCheck, Save, RefreshCw } from 'lu
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { toast } from 'sonner';
 
 interface Setting {
     id?: number;
@@ -24,7 +23,6 @@ export default function AdminSettingsPage() {
         const { data, error } = await supabase.from('system_settings').select('*').order('key');
         if (error) {
             console.error('Error fetching settings:', error);
-            toast.error('Failed to load settings');
         } else {
             setSettings(data || []);
         }
@@ -49,10 +47,10 @@ export default function AdminSettingsPage() {
                     .eq('key', setting.key);
                 if (error) throw error;
             }
-            toast.success('Settings saved successfully');
+            alert('Settings saved successfully');
         } catch (err) {
             console.error('Error saving settings:', err);
-            toast.error('Failed to save settings');
+            alert('Failed to save settings');
         } finally {
             setSaving(false);
         }
