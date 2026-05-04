@@ -44,10 +44,9 @@ async function main() {
     console.log('\n--- TRIGGERING ALLOCATION ENGINE ---');
     try {
         const result = await runAllocationEngine(targetDate, 'Day');
-        if (result) {
+        if (result && Array.isArray(result)) {
             console.log(`\nSUCCESS!`);
-            console.log(`Batch ID: ${result.batchId}`);
-            console.log(`Offers Sent: ${result.count}`);
+            console.log(`Potential assignments found: ${result.length}`);
             console.log('\nCheck your Matrix page now. You should see red badges on the phones.');
         } else {
             console.log('\nEngine ran but no allocations were made. Make sure there are OT requests for 2026-05-15.');
