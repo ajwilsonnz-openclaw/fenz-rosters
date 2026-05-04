@@ -166,10 +166,11 @@ export async function POST(request: NextRequest) {
 
     // ── Station breakdown ────────────────────────────────────────────────────
     const stationBreakdown = stationResults.map(sr => {
+      const currentStationName = sr.station_name || 'Unknown';
       const sc = SCENARIO.stations.find(s => s.stationName === sr.station_name)!;
       return {
-        stationName: sr.station_name,
-        district: stationDistrictMap[sr.station_name || 'Unknown'],
+        stationName: currentStationName,
+        district: stationDistrictMap[currentStationName],
         slots: sr.slots,
         specialist: sr.specialist,
         requiredRank: sr.required_rank,
