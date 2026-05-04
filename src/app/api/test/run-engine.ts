@@ -7,9 +7,8 @@ async function main() {
 
     try {
         const result = await runAllocationEngine(targetDate, targetShift);
-        if (result) {
-            console.log(`Success! Created Batch ID: ${result.batchId}`);
-            console.log(`Sent ${result.count} offers.`);
+        if (result && Array.isArray(result)) {
+            console.log(`Success! Found ${result.length} potential assignments.`);
         } else {
             console.log('Engine ran but no allocations were made. Check availability and requests.');
         }
