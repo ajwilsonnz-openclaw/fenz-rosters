@@ -1,15 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { getCycleIndex, getShift, canDoOT, Watch } from './watch-math';
-import webPush from 'web-push';
-
-// Configure Web Push if keys are present
-if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    webPush.setVapidDetails(
-        process.env.VAPID_SUBJECT || 'mailto:test@fireandemergency.nz',
-        process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY
-    );
-}
+import { sendPushNotification } from '@/lib/notifications';
 
 // --- RESTORED TYPES FOR COMPATIBILITY ---
 export interface OTRequest {
@@ -108,14 +99,11 @@ export async function triggerGlobalRerun(date: string, shift: 'Day' | 'Night') {
     if (currentOffers && currentOffers.length > 0) {
         for (const offer of currentOffers) {
             if (offer.status === 'accepted') {
-                const { data: sub } = await supabase.from('push_subscriptions').select('subscription').eq('firefighter_id', offer.firefighter_id).single();
-                if (sub?.subscription) {
-                    webPush.sendNotification(sub.subscription, JSON.stringify({
-                        title: 'Roster Update',
-                        body: 'Your accepted shift is being re-optimized. You may receive a new offer shortly.',
-                        url: '/offers'
-                    })).catch(e => {});
-                }
+                await sendPushNotification(
+                    offer.firefighter_id,
+                    'Roster Update',
+                    'Your accepted shift is being re-optimized. You may receive a new offer shortly.'
+                );
             }
         }
         const offerIds = currentOffers.map(o => o.id);
@@ -170,14 +158,11 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
             offered_at: new Date().toISOString()
         });
 
-        const { data: sub } = await supabase.from('push_subscriptions').select('subscription').eq('firefighter_id', a.ff.id).single();
-        if (sub?.subscription) {
-            webPush.sendNotification(sub.subscription, JSON.stringify({
-                title: 'New OT Offer',
-                body: `New offer for ${a.req.stations.name}`,
-                url: '/offers'
-            })).catch(e => {});
-        }
+        await sendPushNotification(
+            a.ff.id,
+            'New OT Offer',
+            `New offer for ${a.req.stations.name}`
+        );
     }
     return assignments.length;
 }
