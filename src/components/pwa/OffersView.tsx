@@ -206,7 +206,7 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
             <Dialog open={declineDialogOpen} onOpenChange={setDeclineDialogOpen}>
                 <DialogContent className="sm:max-w-xs rounded-2xl">
                     <DialogHeader>
-                        <DialogTitle className="text-xl font-black text-gray-900">Decline Shift</DialogTitle>
+                        <DialogTitle className="text-xl font-black text-slate-800">Decline Shift</DialogTitle>
                         <DialogDescription className="text-xs font-medium">Please let us know why you are declining this offer.</DialogDescription>
                     </DialogHeader>
                     <div className="flex flex-col gap-2 py-4">
@@ -214,7 +214,7 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
                             <button
                                 key={reason}
                                 onClick={() => { setDeclineReason(reason); setCustomReason(""); }}
-                                className={`p-3 text-left rounded-xl text-sm font-bold border transition-all ${declineReason === reason ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                                className={`p-4 text-left rounded-xl text-sm font-bold border transition-all ${declineReason === reason ? 'bg-[#005DAC] border-[#005DAC] text-white shadow-md' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'}`}
                             >
                                 {reason}
                             </button>
@@ -230,9 +230,11 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
                             />
                         )}
                     </div>
-                    <DialogFooter className="flex gap-2 sm:gap-2">
-                        <Button variant="outline" onClick={() => setDeclineDialogOpen(false)} className="rounded-xl flex-1 border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</Button>
-                        <Button onClick={submitDecline} disabled={isSubmitting} className="rounded-xl flex-1 bg-[#005DAC] hover:bg-blue-700 text-white font-bold">
+                    <DialogFooter className="flex flex-row gap-3 pt-4 border-t mt-4">
+                        <Button variant="outline" onClick={() => setDeclineDialogOpen(false)} className="flex-1 py-6 rounded-xl text-slate-600 font-bold border-slate-200 shadow-sm bg-white hover:bg-slate-50">
+                            Cancel
+                        </Button>
+                        <Button onClick={submitDecline} disabled={isSubmitting} className="flex-1 py-6 rounded-xl bg-[#005DAC] hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-100">
                             {isSubmitting ? "Saving..." : "Confirm"}
                         </Button>
                     </DialogFooter>
