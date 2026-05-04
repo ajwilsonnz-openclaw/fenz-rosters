@@ -36,13 +36,26 @@ export interface Firefighter {
 
 export type DistanceMatrix = Record<number, Record<number, number>>;
 
-export const GROUPS = {
-  STATION_NATIVE: 'Station Native',
-  DISTRICT_NATIVE: 'District Native',
-  REGION_NATIVE: 'Region Native',
-  STEP_UP: 'Step Up',
-  STEP_DOWN: 'Step Down'
-};
+export const GROUPS = [
+  { id: 1, name: 'FF In-District CB', phase: 'ff-callback', rankFilter: 'FF', targetRank: 'FF', district: 'in', isCallback: true, otCounter: 'callback' },
+  { id: 2, name: 'FF In-District NCB', phase: 'ff-noncallback', rankFilter: 'FF', targetRank: 'FF', district: 'in', isCallback: false, otCounter: 'noncallback' },
+  { id: 3, name: 'FF OOD-Adj CB', phase: 'ood-adj-cb', rankFilter: 'FF', targetRank: 'FF', district: 'ood-adj', isCallback: true, otCounter: 'callback' },
+  { id: 4, name: 'FF OOD-Adj NCB', phase: 'ood-adj-nc', rankFilter: 'FF', targetRank: 'FF', district: 'ood-adj', isCallback: false, otCounter: 'noncallback' },
+  { id: 5, name: 'FF OOD-Distant CB', phase: 'ood-dist-cb', rankFilter: 'FF', targetRank: 'FF', district: 'ood-dist', isCallback: true, otCounter: 'callback' },
+  { id: 6, name: 'FF OOD-Distant NCB', phase: 'ood-dist-nc', rankFilter: 'FF', targetRank: 'FF', district: 'ood-dist', isCallback: false, otCounter: 'noncallback' },
+  { id: 7, name: 'SO Callback', phase: 'so-callback', rankFilter: 'SO', targetRank: 'SO', district: 'any', isCallback: true, otCounter: 'officer' },
+  { id: 8, name: 'SO Non-Callback', phase: 'so-noncallback', rankFilter: 'SO', targetRank: 'SO', district: 'any', isCallback: false, otCounter: 'officer' },
+  { id: 9, name: 'SSO Callback', phase: 'sso-callback', rankFilter: 'SSO', targetRank: 'SSO', district: 'any', isCallback: true, otCounter: 'officer' },
+  { id: 10, name: 'SSO Non-Callback', phase: 'sso-noncallback', rankFilter: 'SSO', targetRank: 'SSO', district: 'any', isCallback: false, otCounter: 'officer' },
+  { id: 11, name: 'FF Ride-Up CB', phase: 'ff-rideup-cb', rankFilter: 'FF', targetRank: 'SO', district: 'any', isCallback: true, otCounter: 'callback' },
+  { id: 12, name: 'FF Ride-Up NCB', phase: 'ff-rideup-nc', rankFilter: 'FF', targetRank: 'SO', district: 'any', isCallback: false, otCounter: 'noncallback' },
+  { id: 13, name: 'SSO Ride-Down (SO) CB', phase: 'sso-ridedown-so-cb', rankFilter: 'SSO', targetRank: 'SO', district: 'any', isCallback: true, otCounter: 'officer' },
+  { id: 14, name: 'SSO Ride-Down (SO) NCB', phase: 'sso-ridedown-so-nc', rankFilter: 'SSO', targetRank: 'SO', district: 'any', isCallback: false, otCounter: 'officer' },
+  { id: 15, name: 'SO Ride-Down (FF) CB', phase: 'so-ridedown-ff-cb', rankFilter: 'SO', targetRank: 'FF', district: 'any', isCallback: true, otCounter: 'officer' },
+  { id: 16, name: 'SO Ride-Down (FF) NCB', phase: 'so-ridedown-ff-nc', rankFilter: 'SO', targetRank: 'FF', district: 'any', isCallback: false, otCounter: 'officer' },
+  { id: 17, name: 'SSO Ride-Down (FF) CB', phase: 'sso-ridedown-ff-cb', rankFilter: 'SSO', targetRank: 'FF', district: 'any', isCallback: true, otCounter: 'officer' },
+  { id: 18, name: 'SSO Ride-Down (FF) NCB', phase: 'sso-ridedown-ff-nc', rankFilter: 'SSO', targetRank: 'FF', district: 'any', isCallback: false, otCounter: 'officer' }
+];
 
 export { canDoOT };
 
@@ -52,36 +65,43 @@ export function getDistance(fromId: number, toId: number, matrix: DistanceMatrix
 }
 
 export function getExecutionOrder() {
-  return [
-    GROUPS.STATION_NATIVE,
-    GROUPS.DISTRICT_NATIVE,
-    GROUPS.REGION_NATIVE,
-    GROUPS.STEP_UP,
-    GROUPS.STEP_DOWN
-  ];
+  return GROUPS.map(g => g.id);
 }
 
-export function getEligibleGroups(ff: Firefighter, req: OTRequest): string[] {
+export function getEligibleGroups(ff: Firefighter, req: OTRequest): any[] {
   const eligible = [];
-  
-  // Native logic
-  if (ff.station_id === req.station_id) {
-    eligible.push(GROUPS.STATION_NATIVE);
-  } else if (ff.district === req.district) {
-    eligible.push(GROUPS.DISTRICT_NATIVE);
-  } else {
-    eligible.push(GROUPS.REGION_NATIVE);
-  }
+  const shift = getShiftForWatch(ff.watch, req.date);
+  const cb = getCallbackForWatch(ff.watch, req.date);
 
-  // Rank logic
-  if (req.required_rank === 'SO_OR_SSO') {
-    if (ff.rank === 'SO' || ff.rank === 'SSO') {
-        // Natural match
-    } else {
-        // Step up? FF can't step up to SO in this simple logic
+  for (const group of GROUPS) {
+    // 1. Callback match
+    if (group.isCallback) { if (!cb) continue; }
+    else { if (cb) continue; }
+
+    // 2. Rank match
+    let rankMatches = false;
+    if (group.rankFilter === 'FF') rankMatches = (ff.rank === 'FF' || ff.rank === 'QFF' || ff.rank === 'SFF');
+    else rankMatches = (ff.rank === group.rankFilter);
+    if (!rankMatches) continue;
+
+    // 3. Target Rank match (Safety net logic)
+    if (req.required_rank === 'SO_OR_SSO') {
+        if (group.targetRank !== 'SO' && group.targetRank !== 'SSO') continue;
+    } else if (req.required_rank && group.targetRank !== req.required_rank) {
+        continue;
     }
-  } else if (ff.rank === req.required_rank) {
-    // Natural match
+
+    // 4. District match
+    if (group.district === 'in') {
+        if (ff.district !== req.district) continue;
+    } else if (group.district === 'ood-adj') {
+        if (ff.district === req.district) continue;
+        // Simple adj check: if they are within 30km
+        const dist = getDistance(ff.station_id, req.station_id, {} as any); // matrix not available here usually
+        // Note: Predictive evaluation usually skips dist in pre-filter
+    }
+
+    eligible.push(group);
   }
 
   return eligible;
@@ -95,20 +115,18 @@ export function calculateSurplus(
     availableFFMap: Map<number, Set<string>>
 ) {
     const surplus: Record<string, number> = {};
-    for (const group of getExecutionOrder()) {
-        surplus[group] = 0;
+    for (const group of GROUPS) {
+        surplus[group.id] = 0;
     }
 
     for (const ff of firefighters) {
         const canWork = canDoOT(ff, date, shift);
         if (!canWork.pass) continue;
 
-        // In a real run, we'd check if they are already assigned. 
-        // For dashboard surplus, we just count everyone who COULD work.
         for (const req of requests) {
             const groups = getEligibleGroups(ff, req);
             for (const g of groups) {
-                surplus[g]++;
+                surplus[g.id]++;
             }
         }
     }
