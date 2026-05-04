@@ -171,6 +171,9 @@ export async function allocateV2(
       results.push({
         requestId: req.id,
         station_name: req.station_name,
+        slots: req.slots,
+        specialist: req.specialist_type,
+        required_rank: req.required_rank,
         assignedFirefighters: sorted.slice(0, req.slots).map(f => ({
           firefighter_id: f.id,
           name: `${f.first_name} ${f.last_name}`,
