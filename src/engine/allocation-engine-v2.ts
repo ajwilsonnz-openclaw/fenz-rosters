@@ -177,7 +177,9 @@ export async function allocateV2(
         phasesUsed: ['optimal'],
         assignedFirefighters: sorted.slice(0, req.slots).map(f => ({
           firefighter_id: f.id,
-          name: `${f.first_name} ${f.last_name}`,
+          firefighter_name: `${f.first_name} ${f.last_name}`,
+          rank: f.rank,
+          home_station: f.station_name,
           distance: distances[f.station_id]?.[req.station_id] || 0,
           cascadePhase: 'optimal',
           threshold: 'Must'
