@@ -174,6 +174,7 @@ export async function allocateV2(
         slots: req.slots,
         specialist: req.specialist_type,
         required_rank: req.required_rank,
+        phasesUsed: ['optimal'],
         assignedFirefighters: sorted.slice(0, req.slots).map(f => ({
           firefighter_id: f.id,
           name: `${f.first_name} ${f.last_name}`,
