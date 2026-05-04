@@ -214,7 +214,7 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
                             <button
                                 key={reason}
                                 onClick={() => { setDeclineReason(reason); setCustomReason(""); }}
-                                className={`p-3 text-left rounded-xl text-sm font-bold border transition-all ${declineReason === reason ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                                className={`p-3 text-left rounded-xl text-sm font-bold border transition-all ${declineReason === reason ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}
                             >
                                 {reason}
                             </button>
@@ -225,14 +225,14 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
                                 value={customReason}
                                 onChange={(e) => setCustomReason(e.target.value)}
                                 placeholder="Type reason here..."
-                                className="mt-2 w-full p-3 rounded-xl border border-gray-300 text-sm outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400"
+                                className="mt-2 w-full p-3 rounded-xl border border-gray-300 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
                                 autoFocus
                             />
                         )}
                     </div>
                     <DialogFooter className="flex gap-2 sm:gap-2">
-                        <Button variant="outline" onClick={() => setDeclineDialogOpen(false)} className="rounded-xl flex-1">Cancel</Button>
-                        <Button variant="destructive" onClick={submitDecline} disabled={isSubmitting} className="rounded-xl flex-1">
+                        <Button variant="outline" onClick={() => setDeclineDialogOpen(false)} className="rounded-xl flex-1 border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</Button>
+                        <Button onClick={submitDecline} disabled={isSubmitting} className="rounded-xl flex-1 bg-[#005DAC] hover:bg-blue-700 text-white font-bold">
                             {isSubmitting ? "Saving..." : "Confirm"}
                         </Button>
                     </DialogFooter>
