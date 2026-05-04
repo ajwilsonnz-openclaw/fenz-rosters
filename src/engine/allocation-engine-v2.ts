@@ -1,8 +1,7 @@
 import { supabase } from '@/lib/supabase';
-import { getCycleIndex, getShift, canDoOT, Watch } from './watch-math';
-import { sendPushNotification } from '@/lib/notifications';
+import { canDoOT, Watch } from './watch-math';
 
-// --- RESTORED TYPES FOR COMPATIBILITY ---
+// --- SHARED TYPES ---
 export interface OTRequest {
   id: number;
   station_id: number;
@@ -39,7 +38,7 @@ export type DistanceMatrix = Record<number, Record<number, number>>;
 
 export { canDoOT };
 
-// --- RESTORED ALLOCATE V2 FOR COMPATIBILITY ---
+// --- PURE LOGIC: ALLOCATE V2 (Safe for Client & Server) ---
 export async function allocateV2(
     requests: OTRequest[],
     firefighters: Firefighter[],
@@ -54,11 +53,7 @@ export async function allocateV2(
       const candidates = firefighters.filter(ff => {
         if (busyFFs.has(ff.id)) return false;
         if (exclusions[req.id]?.has(ff.id)) return false;
-        
-        // Check availability
         if (availableFFMap && !availableFFMap.has(ff.id)) return false;
-        
-        // Basic match
         return ff.rank === req.required_rank || (req.required_rank === 'SO_OR_SSO' && (ff.rank === 'SO' || ff.rank === 'SSO'));
       });
   
@@ -84,37 +79,11 @@ export async function allocateV2(
     return results;
 }
 
-// --- HARSH & EFFICIENT ROUND LOGIC ---
-
-export async function triggerGlobalRerun(date: string, shift: 'Day' | 'Night') {
-    console.log(`--- [HARSH RERUN] Restarting Allocation for ${date} [${shift}] ---`);
-
-    const { data: currentOffers } = await supabase
-        .from('ot_offers')
-        .select('*, ot_requests!inner(date, shift_type), firefighters(id, email)')
-        .eq('ot_requests.date', date)
-        .eq('ot_requests.shift_type', shift)
-        .in('status', ['sent', 'accepted']);
-
-    if (currentOffers && currentOffers.length > 0) {
-        for (const offer of currentOffers) {
-            if (offer.status === 'accepted') {
-                await sendPushNotification(
-                    offer.firefighter_id,
-                    'Roster Update',
-                    'Your accepted shift is being re-optimized. You may receive a new offer shortly.'
-                );
-            }
-        }
-        const offerIds = currentOffers.map(o => o.id);
-        await supabase.from('ot_offers').update({ status: 'withdrawn' }).in('id', offerIds);
-        const reqIds = Array.from(new Set(currentOffers.map(o => o.ot_request_id)));
-        await supabase.from('ot_assignments').delete().in('ot_request_id', reqIds);
-    }
-
-    return await runAllocationEngine(date, shift);
-}
-
+/**
+ * PURE ENGINE RUN
+ * This only performs the calculations and returns the suggested assignments.
+ * No DB writes, no notifications.
+ */
 export async function runAllocationEngine(targetDate: string, targetShift: 'Day' | 'Night') {
     const { data: requests } = await supabase
         .from('ot_requests')
@@ -150,43 +119,5 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
         }
     }
 
-    for (const a of assignments) {
-        await supabase.from('ot_offers').insert({
-            ot_request_id: a.req.id,
-            firefighter_id: a.ff.id,
-            status: 'sent',
-            offered_at: new Date().toISOString()
-        });
-
-        await sendPushNotification(
-            a.ff.id,
-            'New OT Offer',
-            `New offer for ${a.req.stations.name}`
-        );
-    }
-    return assignments.length;
-}
-
-export async function handleOfferResponse(offerId: number, response: 'accepted' | 'declined') {
-    const { data: offer } = await supabase.from('ot_offers').update({ status: response }).eq('id', offerId).select('*, ot_requests!inner(date, shift_type)').single();
-    if (!offer) return;
-
-    const req = offer.ot_requests;
-    const { data: pending } = await supabase.from('ot_offers')
-        .select('id, ot_requests!inner(date, shift_type)')
-        .eq('ot_requests.date', req.date)
-        .eq('ot_requests.shift_type', req.shift_type)
-        .eq('status', 'sent');
-
-    if (!pending || pending.length === 0) {
-        const { data: declines } = await supabase.from('ot_offers')
-            .select('id, ot_requests!inner(date, shift_type)')
-            .eq('ot_requests.date', req.date)
-            .eq('ot_requests.shift_type', req.shift_type)
-            .eq('status', 'declined');
-
-        if (declines && declines.length > 0) {
-            await triggerGlobalRerun(req.date, req.shift_type);
-        }
-    }
+    return assignments;
 }
