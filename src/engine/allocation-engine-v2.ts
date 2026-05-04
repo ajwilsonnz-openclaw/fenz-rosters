@@ -182,7 +182,8 @@ export async function allocateV2(
           home_station: f.station_name,
           distance: distances[f.station_id]?.[req.station_id] || 0,
           cascadePhase: 'optimal',
-          threshold: 'Must'
+          threshold: 'Must',
+          assignedAtGroup: 1
         }))
       });
     }
