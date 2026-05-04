@@ -22,9 +22,13 @@ export default function PushSubscriber() {
     const [showPrompt, setShowPrompt] = useState(false);
 
     useEffect(() => {
+        console.log("PushSubscriber: checking support...");
         if ('serviceWorker' in navigator && 'PushManager' in window) {
+            console.log("PushSubscriber: supported.");
             setIsSupported(true);
             checkSubscription();
+        } else {
+            console.warn("PushSubscriber: not supported in this browser context.");
         }
     }, []);
 
@@ -32,8 +36,10 @@ export default function PushSubscriber() {
         const registration = await navigator.serviceWorker.ready;
         const subscription = await registration.pushManager.getSubscription();
         setIsSubscribed(!!subscription);
+        console.log("PushSubscriber: isSubscribed =", !!subscription);
         
         if (subscription) {
+            console.log("PushSubscriber: syncing existing subscription to DB.");
             // Already subscribed, ensure it's in the DB for the current user session
             const { data: { session } } = await supabase.auth.getSession();
             if (session) {
@@ -47,7 +53,10 @@ export default function PushSubscriber() {
                 }
             }
         } else if (Notification.permission !== 'denied') {
+            console.log("PushSubscriber: showPrompt set to true.");
             setShowPrompt(true);
+        } else {
+            console.warn("PushSubscriber: notification permission is denied.");
         }
     };
 
