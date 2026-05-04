@@ -30,7 +30,7 @@ export interface Firefighter {
   ot_count_nights: number;
   preferences: {
     districts: string[];
-    stations: number[];
+    stations: string[];
   };
 }
 
