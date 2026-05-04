@@ -84,7 +84,8 @@ export async function allocateV2(
           firefighter_id: f.id,
           name: `${f.first_name} ${f.last_name}`,
           distance: distances[f.station_id]?.[req.station_id] || 0,
-          cascadePhase: 'optimal'
+          cascadePhase: 'optimal',
+          threshold: 'Must'
         }))
       });
     }
