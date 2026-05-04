@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { canDoOT, Watch } from './watch-math';
+import { canDoOT, Watch, getShift, getCallbackType } from './watch-math';
 
 // --- SHARED TYPES ---
 export interface OTRequest {
@@ -58,6 +58,14 @@ export const GROUPS = [
 ];
 
 export { canDoOT };
+
+export function getShiftForWatch(watch: string, dateStr: string): 'Day' | 'Night' | 'Off' {
+  return getShift(watch as any, new Date(dateStr));
+}
+
+export function getCallbackForWatch(watch: string, dateStr: string): string | null {
+  return getCallbackType(watch as any, new Date(dateStr));
+}
 
 export function getDistance(fromId: number, toId: number, matrix: DistanceMatrix): number {
   if (fromId === toId) return 0;
