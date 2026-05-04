@@ -33,13 +33,22 @@ export default function PushSubscriber() {
     }, []);
 
     const checkSubscription = async () => {
-        console.log("PushSubscriber: checking navigator.serviceWorker.ready...");
-        // Use a timeout to detect hangs
-        const timeout = setTimeout(() => console.warn("PushSubscriber: serviceWorker.ready is taking a long time..."), 5000);
+        console.log("PushSubscriber: checking navigator.serviceWorker.getRegistration()...");
         
-        const registration = await navigator.serviceWorker.ready;
-        clearTimeout(timeout);
-        console.log("PushSubscriber: serviceWorker is ready.");
+        let registration = await navigator.serviceWorker.getRegistration();
+        
+        if (!registration) {
+            console.warn("PushSubscriber: no service worker registration found. Attempting to register manually...");
+            try {
+                registration = await navigator.serviceWorker.register('/sw.js');
+                console.log("PushSubscriber: manual registration successful.");
+            } catch (err) {
+                console.error("PushSubscriber: manual registration failed:", err);
+                return;
+            }
+        }
+
+        console.log("PushSubscriber: serviceWorker registration status:", registration.active ? "active" : (registration.installing ? "installing" : "waiting"));
         
         const subscription = await registration.pushManager.getSubscription();
         setIsSubscribed(!!subscription);
@@ -77,6 +86,7 @@ export default function PushSubscriber() {
 
             const registration = await navigator.serviceWorker.ready;
             const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+            console.log("PushSubscriber: subscribing with VAPID key =", publicVapidKey);
             
             if (!publicVapidKey) {
                 console.error("No VAPID public key available");
