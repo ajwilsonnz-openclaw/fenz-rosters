@@ -34,11 +34,11 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts",
-    "src/engine/allocation-engine.ts.old.bak"
+    "**/*.mts"
   ],
   "exclude": [
     "node_modules",
-    "seed-fix.ts"
+    "seed-fix.ts",
+    "legacy_v1"
   ]
 }
