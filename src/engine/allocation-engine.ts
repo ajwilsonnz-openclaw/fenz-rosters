@@ -1,12 +1,11 @@
-import { Pool } from 'pg';
-import { getShift, getCallbackType, isOnLeave } from './watch-math';
+import { getShift, getCallbackType, isOnLeave, Watch } from './watch-math';
 import { getPool } from '../lib/db';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface Firefighter {
   id: number; first_name: string; last_name: string; station_id: number;
-  station_name: string; district: string; area_id: number; watch: string;
+  station_name: string; district: string; area_id: number; watch: Watch;
   rank: 'FF' | 'QFF' | 'SFF' | 'SO' | 'SSO';
   qualifications: Record<string, boolean>; preferences: { districts: string[]; stations: string[] };
   want_to_work_day: boolean; want_to_work_night: boolean;
