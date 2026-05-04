@@ -36,7 +36,86 @@ export interface Firefighter {
 
 export type DistanceMatrix = Record<number, Record<number, number>>;
 
+export const GROUPS = {
+  STATION_NATIVE: 'Station Native',
+  DISTRICT_NATIVE: 'District Native',
+  REGION_NATIVE: 'Region Native',
+  STEP_UP: 'Step Up',
+  STEP_DOWN: 'Step Down'
+};
+
 export { canDoOT };
+
+export function getDistance(fromId: number, toId: number, matrix: DistanceMatrix): number {
+  if (fromId === toId) return 0;
+  return matrix[fromId]?.[toId] ?? 999;
+}
+
+export function getExecutionOrder() {
+  return [
+    GROUPS.STATION_NATIVE,
+    GROUPS.DISTRICT_NATIVE,
+    GROUPS.REGION_NATIVE,
+    GROUPS.STEP_UP,
+    GROUPS.STEP_DOWN
+  ];
+}
+
+export function getEligibleGroups(ff: Firefighter, req: OTRequest): string[] {
+  const eligible = [];
+  
+  // Native logic
+  if (ff.station_id === req.station_id) {
+    eligible.push(GROUPS.STATION_NATIVE);
+  } else if (ff.district === req.district) {
+    eligible.push(GROUPS.DISTRICT_NATIVE);
+  } else {
+    eligible.push(GROUPS.REGION_NATIVE);
+  }
+
+  // Rank logic
+  if (req.required_rank === 'SO_OR_SSO') {
+    if (ff.rank === 'SO' || ff.rank === 'SSO') {
+        // Natural match
+    } else {
+        // Step up? FF can't step up to SO in this simple logic
+    }
+  } else if (ff.rank === req.required_rank) {
+    // Natural match
+  }
+
+  return eligible;
+}
+
+export function calculateSurplus(
+    requests: OTRequest[],
+    firefighters: Firefighter[],
+    date: string,
+    shift: 'Day' | 'Night',
+    availableFFMap: Map<number, Set<string>>
+) {
+    const surplus: Record<string, number> = {};
+    for (const group of getExecutionOrder()) {
+        surplus[group] = 0;
+    }
+
+    for (const ff of firefighters) {
+        const canWork = canDoOT(ff, date, shift);
+        if (!canWork.pass) continue;
+
+        // In a real run, we'd check if they are already assigned. 
+        // For dashboard surplus, we just count everyone who COULD work.
+        for (const req of requests) {
+            const groups = getEligibleGroups(ff, req);
+            for (const g of groups) {
+                surplus[g]++;
+            }
+        }
+    }
+
+    return surplus;
+}
+
 
 // --- PURE LOGIC: ALLOCATE V2 (Safe for Client & Server) ---
 export async function allocateV2(
