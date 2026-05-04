@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { getShift, getCallbackType, isOnLeave, Watch } from './watch-math';
 import { getPool } from '../lib/db';
 
