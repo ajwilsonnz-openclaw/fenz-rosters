@@ -28,6 +28,14 @@ Multi-district overtime allocation system for **Fire and Emergency New Zealand (
 - [x] **Build the Firefighter Response Endpoint:** Create `/api/offers/respond` to handle Accept/Decline actions from the PWA.
 - [x] **The Rejection Backfill Loop:** When the PWA sends a Decline, trigger a targeted API call to the Engine to read the `requestExclusions`, recalculate the pool, and fire off a new offer to the next-in-line Backup candidate.
 
+## Next Steps / Focus Areas
+
+1.  **Refine "Must/Might/Wont" Accuracy:** Ensure predictive evaluation completely aligns with batch engine output for edge cases (e.g., cross-district distance ties).
+2.  **Officer Qualifications:** Add strict pre-filtering for PRT/Type 4 required stations during engine run.
+3.  **Yellow Watch Implementation:** **NOTE:** Yellow Watch stations operate on a 5-day week and do not follow the standard 4-watch rotation. The Allocation Engine and PWA App must be updated to properly sort and handle Yellow Watch personnel (i.e. they do not have standard callbacks, and they might have different distance constraints).
+4.  **UI Feedback Loop:** Ensure the `filled` page dynamically updates its display when offers are accepted or declined.
+5.  **Multi-User Matrix Real-Data Testing:** Test the `matrix` page using real, generated Firefighter data and observe the live WebSocket updates across 12 simultaneous mock devices.
+
 ### Medium Term
 - [x] **Authentication (Supabase Auth):** Implement secure login. **IMPORTANT:** Currently, `rebecca.taylor@fenz.slack.com` is hardcoded as a fallback in `(pwa)/availability/page.tsx`, `profile/page.tsx`, `confirmed/page.tsx`, and `offers/page.tsx`. This must be removed once Auth is active.
 - [ ] **Push Notifications:** Wire up the VAPID keys to send a real web-push ping when `ot_offers` are generated.

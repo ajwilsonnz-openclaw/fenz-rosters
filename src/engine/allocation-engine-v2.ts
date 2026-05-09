@@ -247,9 +247,8 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
     distData?.forEach((d: any) => {
         const distObj: Record<number, number> = {};
         const distances = typeof d.distances === 'string' ? JSON.parse(d.distances) : d.distances;
-        for (const [stationName, km] of Object.entries(distances)) {
-          const targetId = nameToId[stationName];
-          if (targetId) distObj[targetId] = Number(km);
+        for (const [targetIdStr, km] of Object.entries(distances)) {
+          distObj[Number(targetIdStr)] = Number(km);
         }
         distMatrix[d.station_id] = distObj;
     });

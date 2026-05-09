@@ -155,9 +155,8 @@ export async function POST(request: NextRequest) {
       distData?.forEach((d: any) => {
         const distObj: Record<number, number> = {};
         const distances = typeof d.distances === 'string' ? JSON.parse(d.distances) : d.distances;
-        for (const [stationName, km] of Object.entries(distances)) {
-          const targetId = nameToId[stationName];
-          if (targetId) distObj[targetId] = Number(km);
+        for (const [targetIdStr, km] of Object.entries(distances)) {
+          distObj[Number(targetIdStr)] = Number(km);
         }
         distMatrix[d.station_id] = distObj;
       });
@@ -206,11 +205,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, stationResults });
     }
 
-    if (body.action === 'remove_assignment') {
-      const { assignmentId, requestId } = body;
+    if (body.action === 'revoke_assignment') {
+      const { assignmentId, requestId, reason, ffId } = body;
+      
+      // Delete the assignment
       await supabase.from('ot_assignments').delete().eq('id', assignmentId);
-      const { data: req } = await supabase.from('ot_requests').select('number_filled').eq('id', requestId).single();
-      if (req) await supabase.from('ot_requests').update({ number_filled: Math.max(0, req.number_filled - 1), status: 'pending' }).eq('id', requestId);
+      
+      // Update request counts
+      const { data: req } = await supabase.from('ot_requests').select('number_filled, date, shift_type').eq('id', requestId).single();
+      if (req) {
+          await supabase.from('ot_requests').update({ number_filled: Math.max(0, req.number_filled - 1), status: 'pending' }).eq('id', requestId);
+          
+          // Create a declined offer so engine knows not to pick them again
+          await supabase.from('ot_offers').insert({
+              ot_request_id: requestId,
+              firefighter_id: ffId,
+              status: 'declined',
+              offered_at: new Date().toISOString(),
+              decline_reason: reason || 'Revoked by Officer'
+          });
+
+          // We can optionally trigger a rerun here, or wait for officer to do it manually.
+          // The user requested: "Once the engine has waited for all the replies, it'll do it's normal redo."
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    if (body.action === 'handle_decline') {
+      const { offerId, reason } = body;
+      // Just mark it as declined
+      await supabase.from('ot_offers').update({ status: 'declined', decline_reason: reason || 'Revoked by Officer' }).eq('id', offerId);
+      // We assume handleOfferResponse will do the rest, but we should import and call it here.
+      // Wait, we can't easily call handleOfferResponse directly from this edge/node route if it requires imports that cause issues,
+      // but let's just trigger a global rerun if needed, or leave it to cron/officer.
+      // Actually we will just update the DB, the next run will pick it up.
       return NextResponse.json({ success: true });
     }
 

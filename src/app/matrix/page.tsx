@@ -84,6 +84,25 @@ function MobileFrame({ email }: { email: string }) {
 }
 
 export default function MatrixDemoPage() {
+  const [ffs, setFfs] = React.useState<{ email: string, name: string }[]>([]);
+  const [selectedUsers, setSelectedUsers] = React.useState<string[]>(TEST_USERS);
+
+  React.useEffect(() => {
+      import('@/lib/supabase').then(({ supabase }) => {
+          supabase.from('firefighters').select('email, first_name, last_name').eq('is_active', true).then(({ data }) => {
+              if (data) {
+                  setFfs(data.map(ff => ({ email: ff.email, name: `${ff.first_name} ${ff.last_name}` })));
+              }
+          });
+      });
+  }, []);
+
+  const handleUserChange = (index: number, newEmail: string) => {
+      const updated = [...selectedUsers];
+      updated[index] = newEmail;
+      setSelectedUsers(updated);
+  };
+
   return (
     <div className="min-h-screen bg-slate-200 p-8">
       <div className="max-w-[1800px] mx-auto">
@@ -98,11 +117,22 @@ export default function MatrixDemoPage() {
         </div>
 
         {/* Flex grid to hold the devices tightly */}
-        <div className="flex flex-wrap gap-x-2 gap-y-12 justify-center pt-8">
-          {TEST_USERS.map(email => (
-            <div key={email} className="h-[740px] relative flex flex-col items-center">
-              <div className="absolute top-[-30px] w-full text-center text-slate-700 text-[15px] font-black tracking-widest uppercase bg-slate-200/80 backdrop-blur rounded-full py-1 z-10 border border-slate-300 shadow-sm">
-                {email.split('@')[0].replace('.', ' ')}
+        <div className="flex flex-wrap gap-x-2 gap-y-16 justify-center pt-8">
+          {selectedUsers.map((email, i) => (
+            <div key={`${email}-${i}`} className="h-[740px] relative flex flex-col items-center">
+              <div className="absolute top-[-40px] w-full flex justify-center z-20">
+                  <select 
+                      value={email}
+                      onChange={(e) => handleUserChange(i, e.target.value)}
+                      className="text-center text-slate-700 text-[13px] font-black tracking-widest uppercase bg-slate-200/90 backdrop-blur rounded-full py-1.5 px-3 z-10 border border-slate-400 shadow-sm outline-none cursor-pointer hover:bg-slate-300 transition-colors max-w-[280px] truncate"
+                  >
+                      {ffs.map(f => (
+                          <option key={f.email} value={f.email}>{f.name}</option>
+                      ))}
+                      {!ffs.find(f => f.email === email) && (
+                          <option value={email}>{email.split('@')[0].replace('.', ' ')}</option>
+                      )}
+                  </select>
               </div>
               <MobileFrame email={email} />
             </div>

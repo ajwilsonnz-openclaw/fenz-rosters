@@ -192,9 +192,8 @@ function FilledContent() {
     distData?.forEach((d: any) => {
       const distObj: Record<number, number> = {};
       const distances = typeof d.distances === 'string' ? JSON.parse(d.distances) : d.distances;
-      for (const [stationName, km] of Object.entries(distances)) {
-        const targetId = nameToId[stationName];
-        if (targetId) distObj[targetId] = Number(km);
+      for (const [targetIdStr, km] of Object.entries(distances)) {
+        distObj[Number(targetIdStr)] = Number(km);
       }
       distMatrix[d.station_id] = distObj;
     });
@@ -286,32 +285,36 @@ function FilledContent() {
     setRemoveDialogOpen(true);
   };
 
-  const executeRemoveAndProceed = async (nextAction: 'run_engine' | 'manual_domino') => {
+  const executeRemoveAndProceed = async () => {
     setIsRemoving(true);
+    const reason = prompt("Please enter a reason for revoking this assignment:");
+    if (!reason) {
+        setIsRemoving(false);
+        return; // Cancelled
+    }
+
     try {
       if (selectedAssignment.isOffer) {
-        await supabase.from('ot_offers').delete().eq('id', selectedAssignment.assignId);
+        await fetch('/api/allocate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'handle_decline', offerId: selectedAssignment.assignId, reason })
+        });
       } else {
         await fetch('/api/allocate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'remove_assignment', assignmentId: selectedAssignment.assignId, requestId: selectedAssignment.ot_request_id })
+          body: JSON.stringify({ 
+              action: 'revoke_assignment', 
+              assignmentId: selectedAssignment.assignId, 
+              requestId: selectedAssignment.ot_request_id,
+              ffId: selectedAssignment.firefighter_id,
+              reason
+          })
         });
       }
-
-      if (nextAction === 'run_engine') {
-        const dateStr = operativeDate.toLocaleDateString('en-CA');
-        await fetch('/api/allocate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'run_allocation', date: dateStr, shift_type: operativeShift })
-        });
-        setRemoveDialogOpen(false);
-        fetchData();
-      } else {
-        const req = Array.isArray(selectedAssignment.ot_requests) ? selectedAssignment.ot_requests[0] : selectedAssignment.ot_requests;
-        router.push(`/officer?date=${operativeDate.toLocaleDateString('en-CA')}&shift=${operativeShift}&resolve_station=${req.station_id}`);
-      }
+      setRemoveDialogOpen(false);
+      fetchData();
     } catch (err) { console.error(err); } finally { setIsRemoving(false); }
   };
 
@@ -522,20 +525,14 @@ function FilledContent() {
                   {selectedAssignment?.isOffer ? "Revoke Pending Offer?" : "Remove Overtime?"}
                 </DialogTitle>
                 <DialogDescription className="text-xs font-bold text-gray-500 mt-2">
-                  This will unassign the firefighter and reopen the vacancy. How would you like to resolve it?
+                  This will unassign the firefighter and reopen the vacancy. Please provide a reason:
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 py-4">
-                <Button variant="outline" onClick={() => executeRemoveAndProceed('run_engine')} disabled={isRemoving} className="h-14 justify-start px-6 rounded-xl border-blue-200 hover:bg-blue-50 text-blue-800 font-bold">
-                  <span className="flex flex-col items-start text-left">
-                    <span className="uppercase tracking-widest text-[10px] font-black">Run Scheduled Engine</span>
-                    <span className="text-xs font-medium text-gray-500">Auto-fill the gap with the algorithm</span>
-                  </span>
-                </Button>
-                <Button variant="outline" onClick={() => executeRemoveAndProceed('manual_domino')} disabled={isRemoving} className="h-14 justify-start px-6 rounded-xl border-orange-200 hover:bg-orange-50 text-orange-800 font-bold">
-                  <span className="flex flex-col items-start text-left">
-                    <span className="uppercase tracking-widest text-[10px] font-black">Resolve Last-Minute</span>
-                    <span className="text-xs font-medium text-gray-500">Use the guided domino wizard</span>
+                <Button variant="destructive" onClick={executeRemoveAndProceed} disabled={isRemoving} className="h-14 justify-start px-6 rounded-xl border-red-200 hover:bg-red-50 text-red-800 font-bold w-full bg-red-100">
+                  <span className="flex flex-col items-start text-left w-full">
+                    <span className="uppercase tracking-widest text-[10px] font-black text-red-600">Revoke Assignment</span>
+                    <span className="text-xs font-medium text-red-400">Cancel offer and notify</span>
                   </span>
                 </Button>
               </div>
