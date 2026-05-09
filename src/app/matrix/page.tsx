@@ -53,7 +53,7 @@ function MobileFrame({ email }: { email: string }) {
   };
 
   return (
-    <div className="w-[375px] h-[900px] bg-slate-50 border-[8px] border-slate-900 rounded-[3rem] shadow-xl overflow-hidden flex flex-col relative scale-[0.80] origin-top">
+    <div className="w-[375px] h-[900px] bg-slate-50 border-[8px] border-slate-900 rounded-[3rem] shadow-xl overflow-hidden flex flex-col relative scale-[0.95] origin-top">
       {/* Header */}
       <header className="w-full bg-[#005DAC] text-white shadow-md sticky top-0 z-50 h-14 shrink-0">
         <div className="flex h-full items-center justify-between px-4">
@@ -85,14 +85,26 @@ function MobileFrame({ email }: { email: string }) {
 
 export default function MatrixDemoPage() {
   const [ffs, setFfs] = React.useState<{ email: string, name: string }[]>([]);
-  const [selectedUsers, setSelectedUsers] = React.useState<string[]>(TEST_USERS);
+  const [selectedUsers, setSelectedUsers] = React.useState<string[]>([]);
+  const [isLoaded, setIsLoaded] = React.useState(false);
 
   React.useEffect(() => {
       import('@/lib/supabase').then(({ supabase }) => {
           supabase.from('firefighters').select('email, first_name, last_name').eq('is_active', true).then(({ data }) => {
-              if (data) {
+              if (data && data.length > 0) {
                   setFfs(data.map(ff => ({ email: ff.email, name: `${ff.first_name} ${ff.last_name}` })));
+                  
+                  const saved = localStorage.getItem('matrix_selected_users');
+                  if (saved) {
+                      setSelectedUsers(JSON.parse(saved));
+                  } else {
+                      // Fallback to first 12 DB users if no saved state
+                      const defaultUsers = data.slice(0, 12).map(f => f.email);
+                      setSelectedUsers(defaultUsers);
+                      localStorage.setItem('matrix_selected_users', JSON.stringify(defaultUsers));
+                  }
               }
+              setIsLoaded(true);
           });
       });
   }, []);
@@ -101,7 +113,10 @@ export default function MatrixDemoPage() {
       const updated = [...selectedUsers];
       updated[index] = newEmail;
       setSelectedUsers(updated);
+      localStorage.setItem('matrix_selected_users', JSON.stringify(updated));
   };
+
+  if (!isLoaded) return <div className="min-h-screen bg-slate-200 p-8 flex items-center justify-center font-black uppercase text-slate-500">Loading DB...</div>;
 
   return (
     <div className="min-h-screen bg-slate-200 p-8">
@@ -117,9 +132,9 @@ export default function MatrixDemoPage() {
         </div>
 
         {/* Flex grid to hold the devices tightly */}
-        <div className="flex flex-wrap gap-x-2 gap-y-16 justify-center pt-8">
+        <div className="flex flex-wrap gap-x-6 gap-y-24 justify-center pt-12">
           {selectedUsers.map((email, i) => (
-            <div key={`${email}-${i}`} className="h-[740px] relative flex flex-col items-center">
+            <div key={`${email}-${i}`} className="h-[880px] relative flex flex-col items-center">
               <div className="absolute top-[-40px] w-full flex justify-center z-20">
                   <select 
                       value={email}
