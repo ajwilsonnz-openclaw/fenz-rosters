@@ -11,18 +11,18 @@ import { ConfirmedView } from '@/components/pwa/ConfirmedView';
 import BottomNav from '@/components/layout/BottomNav';
 
 const TEST_USERS = [
-  "adam.wilson@fireandemergency.nz",
-  "sarah.mitchell@fenz.slack.com",
-  "tane.rawiri@fenz.slack.com",
-  "liam.obrien@fenz.slack.com",
-  "aroha.te rangi@fenz.slack.com",
-  "marcus.williams@fenz.slack.com",
-  "kahu.makiha@fenz.slack.com",
-  "rebecca.taylor@fenz.slack.com",
-  "luke.tanner@fenz.slack.com",
-  "tommy.ahu@fenz.slack.com",
-  "fiona.cameron@fenz.slack.com",
-  "sam.tong@fenz.slack.com"
+  "wiremu.hemara@fireandemergency.nz",
+  "sarah.mitchell@fireandemergency.nz",
+  "tane.rawiri@fireandemergency.nz",
+  "liam.obrien@fireandemergency.nz",
+  "aroha.te rangi@fireandemergency.nz",
+  "marcus.williams@fireandemergency.nz",
+  "kahu.makiha@fireandemergency.nz",
+  "rebecca.taylor@fireandemergency.nz",
+  "luke.tanner@fireandemergency.nz",
+  "tommy.ahu@fireandemergency.nz",
+  "fiona.cameron@fireandemergency.nz",
+  "sam.tong@fireandemergency.nz"
 ];
 
 function MobileFrame({ email }: { email: string }) {

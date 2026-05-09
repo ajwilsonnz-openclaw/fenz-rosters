@@ -124,7 +124,7 @@ function RostersContent() {
       const { data: ffData } = await supabase.from('firefighters').select(`*, stations (name, district)`).eq('is_active', true);
       const { data: reqData } = await supabase.from('ot_requests').select(`*, stations (name, district)`).eq('date', dateStr).eq('shift_type', operativeShift);
 
-      const { data: assignmentData } = await supabase.from('ot_assignments').select('firefighter_id').eq('ot_requests.date', dateStr).eq('ot_requests.shift_type', operativeShift).neq('status', 'declined');
+      const { data: assignmentData } = await supabase.from('ot_assignments').select('firefighter_id, ot_requests!inner(date, shift_type)').eq('ot_requests.date', dateStr).eq('ot_requests.shift_type', operativeShift).neq('status', 'declined');
       const assignedIds = new Set(assignmentData?.map((a: any) => a.firefighter_id) || []);
 
       const { data: availData } = await supabase.from('availability').select('firefighter_id').eq('date', dateStr).eq('shift_type', operativeShift);

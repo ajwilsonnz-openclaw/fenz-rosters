@@ -41,7 +41,8 @@ export async function triggerGlobalRerun(date: string, shift: 'Day' | 'Night') {
                 ot_request_id: a.req.id,
                 firefighter_id: a.ff.id,
                 status: 'sent',
-                offered_at: new Date().toISOString()
+                offered_at: new Date().toISOString(),
+                metadata: a.metadata
             });
 
             await sendPushNotification(

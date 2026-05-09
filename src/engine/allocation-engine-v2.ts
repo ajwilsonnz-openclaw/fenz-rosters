@@ -76,7 +76,7 @@ export function getExecutionOrder() {
   return GROUPS.map(g => g.id);
 }
 
-export function getEligibleGroups(ff: Firefighter, req: OTRequest, isSurplus?: Record<number, number>): any[] {
+export function getEligibleGroups(ff: Firefighter, req: OTRequest, isSurplus?: Record<number, number>, matrix?: DistanceMatrix): any[] {
   const eligible = [];
   const shift = getShiftForWatch(ff.watch, req.date);
   const cb = getCallbackForWatch(ff.watch, req.date);
@@ -104,9 +104,16 @@ export function getEligibleGroups(ff: Firefighter, req: OTRequest, isSurplus?: R
         if (ff.district !== req.district) continue;
     } else if (group.district === 'ood-adj') {
         if (ff.district === req.district) continue;
-        // Simple adj check: if they are within 30km
-        const dist = getDistance(ff.station_id, req.station_id, {} as any); // matrix not available here usually
-        // Note: Predictive evaluation usually skips dist in pre-filter
+        if (matrix) {
+            const dist = getDistance(ff.station_id, req.station_id, matrix);
+            if (dist > 30) continue; // Adjust threshold as needed
+        }
+    } else if (group.district === 'ood-dist') {
+        if (ff.district === req.district) continue;
+        if (matrix) {
+            const dist = getDistance(ff.station_id, req.station_id, matrix);
+            if (dist <= 30) continue;
+        }
     }
 
     eligible.push(group);
@@ -155,36 +162,58 @@ export async function allocateV2(
     const results = [];
   
     for (const req of requests) {
-      const candidates = firefighters.filter(ff => {
-        if (busyFFs.has(ff.id)) return false;
-        if (exclusions[req.id]?.has(ff.id)) return false;
-        if (availableFFMap && !availableFFMap.has(ff.id)) return false;
-        return ff.rank === req.required_rank || (req.required_rank === 'SO_OR_SSO' && (ff.rank === 'SO' || ff.rank === 'SSO'));
+      const candidates = firefighters.map(ff => {
+        if (busyFFs.has(ff.id)) return null;
+        if (exclusions[req.id]?.has(ff.id)) return null;
+        if (availableFFMap && !availableFFMap.has(ff.id)) return null;
+
+        // Qualification check
+        if (req.required_qualifications && req.required_qualifications.length > 0) {
+            const hasAllQuals = req.required_qualifications.every(q => ff.qualifications?.[q]);
+            if (!hasAllQuals) return null;
+        }
+
+        const otCheck = canDoOT(ff, req.date, req.shift_type);
+        if (!otCheck.pass) return null;
+
+        const groups = getEligibleGroups(ff, req, undefined, distances);
+        if (groups.length === 0) return null;
+
+        const bestGroup = groups[0];
+        const dist = distances[ff.station_id]?.[req.station_id] || 999;
+        const otCount = (req.shift_type === 'Day' ? ff.ot_count_days : ff.ot_count_nights) || 0;
+
+        return { ff, group: bestGroup, dist, otCount };
+      }).filter(Boolean) as { ff: Firefighter, group: any, dist: number, otCount: number }[];
+  
+      candidates.sort((a, b) => {
+        if (a.group.id !== b.group.id) return a.group.id - b.group.id;
+        if (a.otCount !== b.otCount) return a.otCount - b.otCount;
+        return a.dist - b.dist;
       });
   
-      const sorted = candidates.sort((a, b) => {
-        const aDist = distances[a.station_id]?.[req.station_id] || 999;
-        const bDist = distances[b.station_id]?.[req.station_id] || 999;
-        return aDist - bDist;
-      });
-  
+      const assigned = candidates.slice(0, req.slots);
+      
       results.push({
         requestId: req.id,
         station_name: req.station_name,
         slots: req.slots,
         specialist: req.specialist_type,
         required_rank: req.required_rank,
-        phasesUsed: ['optimal'],
-        assignedFirefighters: sorted.slice(0, req.slots).map(f => ({
-          firefighter_id: f.id,
-          firefighter_name: `${f.first_name} ${f.last_name}`,
-          rank: f.rank,
-          home_station: f.station_name,
-          distance: distances[f.station_id]?.[req.station_id] || 0,
-          cascadePhase: 'optimal',
-          threshold: 'Must',
-          assignedAtGroup: 1
-        }))
+        phasesUsed: Array.from(new Set(assigned.map(c => c.group.phase))),
+        assignedFirefighters: assigned.map(c => {
+            busyFFs.add(c.ff.id); // Mark as busy for subsequent requests
+            return {
+              firefighter_id: c.ff.id,
+              firefighter_name: `${c.ff.first_name} ${c.ff.last_name}`,
+              rank: c.ff.rank,
+              home_station: c.ff.station_name,
+              distance: c.dist,
+              cascadePhase: c.group.phase,
+              threshold: c.group.id <= 6 ? 'Must' : (c.group.id <= 10 ? 'Might' : 'Wont'),
+              assignedAtGroup: c.group.id
+            }
+        })
       });
     }
   
@@ -199,35 +228,75 @@ export async function allocateV2(
 export async function runAllocationEngine(targetDate: string, targetShift: 'Day' | 'Night') {
     const { data: requests } = await supabase
         .from('ot_requests')
-        .select('*, stations(name, district)')
+        .select('*, stations(name, district, area_id)')
         .eq('date', targetDate)
-        .eq('shift_type', targetShift);
+        .eq('shift_type', targetShift)
+        .eq('status', 'pending');
 
     if (!requests || requests.length === 0) return null;
 
-    const { data: firefighters } = await supabase.from('firefighters').select('*').eq('is_active', true);
+    const { data: firefighters } = await supabase.from('firefighters').select('*, stations(name, district, area_id)').eq('is_active', true);
     if (!firefighters) return null;
 
+    const { data: distData } = await supabase.from('station_distances').select('*');
+    const { data: stationsData } = await supabase.from('stations').select('id, name');
+    const nameToId: Record<string, number> = {};
+    stationsData?.forEach((s: any) => { nameToId[s.name] = s.id; });
+
+    const distMatrix: DistanceMatrix = {};
+    distData?.forEach((d: any) => {
+        const distObj: Record<number, number> = {};
+        const distances = typeof d.distances === 'string' ? JSON.parse(d.distances) : d.distances;
+        for (const [stationName, km] of Object.entries(distances)) {
+          const targetId = nameToId[stationName];
+          if (targetId) distObj[targetId] = Number(km);
+        }
+        distMatrix[d.station_id] = distObj;
+    });
+
+    const ffs: Firefighter[] = firefighters.map((ff: any) => ({
+        ...ff,
+        station_name: ff.stations?.name || '',
+        district: ff.stations?.district || '',
+        area_id: ff.stations?.area_id || 0,
+        qualifications: typeof ff.qualifications === 'string' ? JSON.parse(ff.qualifications) : (ff.qualifications || {})
+    }));
+
+    const otReqs: OTRequest[] = requests.map((r: any) => {
+        const rank = (r.specialist_type === 'FF' || r.specialist_type === 'SO' || r.specialist_type === 'SSO' || r.specialist_type === 'SO_OR_SSO') ? r.specialist_type : 'FF';
+        const rawQuals = typeof r.required_qualification_ids === 'string' ? JSON.parse(r.required_qualification_ids) : (r.required_qualification_ids || []);
+        
+        return {
+          id: r.id,
+          station_id: r.station_id,
+          station_name: r.stations?.name || '',
+          district: r.stations?.district || '',
+          date: r.date,
+          shift_type: r.shift_type,
+          slots: Math.max(0, r.number_of_slots - r.number_filled),
+          specialist_type: r.specialist_type,
+          required_rank: rank,
+          required_qualifications: rawQuals.map((q: string) => q.toLowerCase())
+        };
+    });
+
+    const results = await allocateV2(otReqs, ffs, distMatrix, new Set(), {});
+    
     const assignments: any[] = [];
-    const usedFFs = new Set<number>();
-
-    for (const req of requests) {
-        const eligible = firefighters.filter(ff => {
-            if (usedFFs.has(ff.id)) return false;
-            return canDoOT(ff, targetDate, targetShift).pass;
-        });
-
-        const sorted = eligible.sort((a, b) => {
-            const aDist = a.district_id === req.stations.district ? 0 : 1;
-            const bDist = b.district_id === req.stations.district ? 0 : 1;
-            if (aDist !== bDist) return aDist - bDist;
-            return ((targetShift === 'Day' ? a.ot_count_days : a.ot_count_nights) || 0) - ((targetShift === 'Day' ? b.ot_count_days : b.ot_count_nights) || 0);
-        });
-
-        const best = sorted[0];
-        if (best) {
-            assignments.push({ req, ff: best });
-            usedFFs.add(best.id);
+    for (const res of results) {
+        const originalReq = requests.find((r: any) => r.id === res.requestId);
+        for (const af of res.assignedFirefighters) {
+            const originalFf = firefighters.find((f: any) => f.id === af.firefighter_id);
+            assignments.push({ 
+                req: originalReq, 
+                ff: originalFf,
+                metadata: {
+                    distance_km: af.distance,
+                    cascadePhase: af.cascadePhase,
+                    must_might_wont: af.threshold,
+                    group: af.assignedAtGroup
+                }
+            });
         }
     }
 
