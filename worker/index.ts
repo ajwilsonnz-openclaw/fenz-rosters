@@ -9,13 +9,13 @@ self.addEventListener('push', function(event: any) {
         try {
             payload = event.data.json();
         } catch (e) {
-            payload = { title: 'FENZ OT', body: event.data.text() };
+            payload = { title: 'Rosters', body: event.data.text() };
         }
         
         const options = {
             body: payload.body || 'You have a new overtime offer.',
-            icon: '/fenz-logo.png', // SWs need png usually, fallback to default if missing
-            badge: '/fenz-logo.png',
+            icon: '/fenz-logo.svg', // SVGs are supported on modern Android OS
+            badge: '/fenz-logo.svg',
             vibrate: [200, 100, 200, 100, 200, 100, 200],
             data: {
                 url: payload.url || '/offers'
@@ -28,7 +28,7 @@ self.addEventListener('push', function(event: any) {
         };
 
         event.waitUntil(
-            self.registration.showNotification(payload.title || 'FENZ Overtime', options)
+            self.registration.showNotification(payload.title || 'Rosters', options)
         );
     }
 });

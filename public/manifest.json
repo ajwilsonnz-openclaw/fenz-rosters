@@ -1,7 +1,7 @@
 {
-    "name": "FENZ Overtime",
-    "short_name": "FENZ OT",
-    "description": "Fire and Emergency NZ Overtime Allocation",
+    "name": "Rosters",
+    "short_name": "Rosters",
+    "description": "Fire and Emergency NZ Rosters",
     "start_url": "/offers",
     "display": "standalone",
     "background_color": "#f8fafc",

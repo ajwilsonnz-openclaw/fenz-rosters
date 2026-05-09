@@ -53,7 +53,7 @@ function MobileFrame({ email }: { email: string }) {
   };
 
   return (
-    <div className="w-[375px] h-[900px] bg-slate-50 border-[8px] border-slate-900 rounded-[3rem] shadow-xl overflow-hidden flex flex-col relative scale-[0.95] origin-top">
+    <div className="w-[414px] h-[900px] bg-slate-50 border-[8px] border-slate-900 rounded-[3rem] shadow-xl overflow-hidden flex flex-col relative scale-[0.95] origin-top">
       {/* Header */}
       <header className="w-full bg-[#005DAC] text-white shadow-md sticky top-0 z-50 h-14 shrink-0">
         <div className="flex h-full items-center justify-between px-4">

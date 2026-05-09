@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FENZ OT",
+  title: "Rosters",
   description: "FENZ Overtime Allocation Engine",
   manifest: "/manifest.json",
   icons: {
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "FENZ OT",
+    title: "Rosters",
   },
 };
 

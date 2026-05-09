@@ -54,6 +54,7 @@ DELETE FROM ot_count_log;
 DELETE FROM audit_logs;
 DELETE FROM ot_assignments;
 DELETE FROM ot_offers;
+DELETE FROM ot_requests;
 DELETE FROM availability;
 DELETE FROM firefighters;
 DELETE FROM station_distances;
@@ -85,7 +86,7 @@ distanceData.forEach(entry => {
         if (!toId) continue;
         distMap[toId] = km;
     }
-    sql += `INSERT INTO station_distances (station_id, district, distances) VALUES (${fromId}, '${entry.area}', '${JSON.stringify(distMap)}');\n`;
+    sql += `INSERT INTO station_distances (station_id, distances) VALUES (${fromId}, '${JSON.stringify(distMap)}');\n`;
 });
 
 sql += `\n-- 5. Firefighters\n`;
