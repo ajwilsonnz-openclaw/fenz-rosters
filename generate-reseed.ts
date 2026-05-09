@@ -63,14 +63,14 @@ stations.forEach(station => {
             const first = sName;
             const last = `FF_${i}`;
             const email = `${sName.toLowerCase()}_${watch.toLowerCase()}_ff_${i}@fireandemergency.nz`;
-            sql += `INSERT INTO firefighters (first_name, last_name, email, station_id, watch, rank, ot_count_days, ot_count_nights, ot_count_callback_days, ot_count_callback_nights, ot_count_noncallback_days, ot_count_noncallback_nights, is_active, qualifications) VALUES ('${first}', '${last}', '${email}', ${station.id}, '${watch}', 'FF', 0, 0, 0, 0, 0, 0, true, '{"driver": true, "not_rookie": true}');\n`;
+            sql += `INSERT INTO firefighters (first_name, last_name, email, station_id, watch, rank, ot_count_days, ot_count_nights, ot_count_callback_days, ot_count_callback_nights, ot_count_noncallback_days, ot_count_noncallback_nights, is_active, qualifications) VALUES ('${first}', '${last}', '${email}', (SELECT id FROM stations WHERE name = '${station.name}'), '${watch}', 'FF', 0, 0, 0, 0, 0, 0, true, '{"driver": true, "not_rookie": true}');\n`;
         }
         
         // Create 1 Officer
         const first = sName;
         const last = officerRank;
         const email = `${sName.toLowerCase()}_${watch.toLowerCase()}_${officerRank.toLowerCase()}@fireandemergency.nz`;
-        sql += `INSERT INTO firefighters (first_name, last_name, email, station_id, watch, rank, ot_count_days, ot_count_nights, ot_count_callback_days, ot_count_callback_nights, ot_count_noncallback_days, ot_count_noncallback_nights, is_active, qualifications) VALUES ('${first}', '${last}', '${email}', ${station.id}, '${watch}', '${officerRank}', 0, 0, 0, 0, 0, 0, true, '{"driver": true, "not_rookie": true, "type4": true, "prt": true}');\n`;
+        sql += `INSERT INTO firefighters (first_name, last_name, email, station_id, watch, rank, ot_count_days, ot_count_nights, ot_count_callback_days, ot_count_callback_nights, ot_count_noncallback_days, ot_count_noncallback_nights, is_active, qualifications) VALUES ('${first}', '${last}', '${email}', (SELECT id FROM stations WHERE name = '${station.name}'), '${watch}', '${officerRank}', 0, 0, 0, 0, 0, 0, true, '{"driver": true, "not_rookie": true, "type4": true, "prt": true}');\n`;
     });
 });
 
