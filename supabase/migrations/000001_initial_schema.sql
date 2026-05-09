@@ -119,7 +119,8 @@ CREATE TABLE IF NOT EXISTS ot_offers (
     offered_at TIMESTAMPTZ DEFAULT NOW(),
     deadline TIMESTAMPTZ,
     responded_at TIMESTAMPTZ,
-    decline_reason TEXT
+    decline_reason TEXT,
+    metadata JSONB DEFAULT '{}'
 );
 
 -- ============================================================
@@ -129,10 +130,12 @@ CREATE TABLE IF NOT EXISTS availability (
     id SERIAL PRIMARY KEY,
     firefighter_id INTEGER REFERENCES firefighters(id),
     date DATE NOT NULL,
+    shift_type VARCHAR(10) NOT NULL,
     is_available BOOLEAN DEFAULT TRUE,
     area_id INTEGER REFERENCES areas(id), -- Which area they're offering for (null = home area)
+    preferences JSONB DEFAULT '{"districts": [], "stations": []}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(firefighter_id, date)
+    UNIQUE(firefighter_id, date, shift_type)
 );
 
 -- ============================================================
