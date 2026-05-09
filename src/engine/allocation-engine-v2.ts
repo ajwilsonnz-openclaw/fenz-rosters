@@ -180,7 +180,7 @@ export async function allocateV2(
         if (groups.length === 0) return null;
 
         const bestGroup = groups[0];
-        const dist = distances[ff.station_id]?.[req.station_id] || 999;
+        const dist = ff.station_id === req.station_id ? 0 : (distances[ff.station_id]?.[req.station_id] ?? 999);
         const otCount = (req.shift_type === 'Day' ? ff.ot_count_days : ff.ot_count_nights) || 0;
 
         return { ff, group: bestGroup, dist, otCount };

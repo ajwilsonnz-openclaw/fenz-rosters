@@ -41,7 +41,8 @@ export default function BottomNav({ className, currentTab, onNavigate, testEmail
         const pollInterval = setInterval(fetchPending, 15000);
 
         // Realtime subscription
-        const channelName = `offers_changes_${(testEmail || 'current').replace(/[@.]/g, '_')}`;
+        const uniqueId = Math.random().toString(36).substring(2, 9);
+        const channelName = `offers_changes_${(testEmail || 'current').replace(/[@.]/g, '_')}_${uniqueId}`;
         const channel = supabase.channel(channelName)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_offers' }, () => {
                 fetchPending();
