@@ -50,6 +50,8 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
     const [submitting, setSubmitting] = React.useState(false);
     const [pendingRemoval, setPendingRemoval] = React.useState<Set<string>>(new Set());
     const [pendingUpdate, setPendingUpdate] = React.useState<Set<string>>(new Set());
+    const pointerStartPos = React.useRef<{ id: string, x: number } | null>(null);
+
 
 
     const [callbackFilter, setCallbackFilter] = React.useState<'ALL' | 'CALLBACK' | 'NON_CALLBACK'>('CALLBACK');
@@ -339,7 +341,6 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
         isClickable = true;
     }
 
-    const pointerStartPos = React.useRef<{ id: string, x: number } | null>(null);
 
     return (
         <div className="bg-slate-50 min-h-screen pb-24">
