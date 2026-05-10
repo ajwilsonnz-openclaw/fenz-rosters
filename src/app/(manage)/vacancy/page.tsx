@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { Activity, ShieldCheck, Sun, Moon, Calendar, PlusCircle, CheckCircle2, ChevronDown, RefreshCcw, ArrowRight, XCircle } from "lucide-react";
+import { Activity, ShieldCheck, Sun, Moon, Calendar, PlusCircle, CheckCircle2, ChevronDown, RefreshCcw, ArrowRight, XCircle, Trash2 } from "lucide-react";
 import { getOperationalTime } from "@/engine/ui-helpers";
 import { getOnDutyWatch } from "@/engine/watch-math";
 import Sidebar from "@/components/layout/Sidebar";
@@ -40,6 +40,7 @@ function OfficerContent() {
   const[selectedRank, setSelectedRank] = useState<string>("FF");
   const [qualifications, setQualifications] = useState<string[]>([]);
   const [dbQuals, setDbQuals] = useState<{ code: string, name: string }[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
 
   // Dialog State
   const[refuseDialogOpen, setRefuseDialogOpen] = useState(false);
@@ -109,7 +110,20 @@ function OfficerContent() {
   useEffect(() => {
     setWizardState('create');
     setEvaluationResults(null);
+    fetchPendingRequests();
   }, [operativeDate, operativeShift]);
+
+  const fetchPendingRequests = async () => {
+    const dateStr = [operativeDate.getFullYear(), String(operativeDate.getMonth() + 1).padStart(2, '0'), String(operativeDate.getDate()).padStart(2, '0')].join('-');
+    const { data } = await supabase
+      .from('ot_requests')
+      .select('*, stations(name, district)')
+      .eq('date', dateStr)
+      .eq('shift_type', operativeShift)
+      .eq('status', 'pending');
+    
+    if (data) setPendingRequests(data);
+  };
 
   // Handoff from Filled page
   useEffect(() => {
@@ -161,12 +175,31 @@ function OfficerContent() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Database error");
-      alert("Added to pending batch. Run engine when ready.");
       setSelectedStation("");
+      fetchPendingRequests(); // Refresh list
     } catch (err: any) { 
       console.error(err);
       alert(`Failed to add: ${err.message}`);
     } finally { setLoading(false); }
+  };
+
+  const handleDeleteRequest = async (requestId: number) => {
+    if (!confirm("Are you sure you want to delete this vacancy?")) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/allocate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_request', requestId })
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to delete");
+      fetchPendingRequests(); // Refresh list
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRunBatchEngine = async () => {
@@ -465,6 +498,62 @@ function OfficerContent() {
                     </div>
                  </div>
               )}
+
+               {/* PENDING BATCH LIST */}
+               {wizardState === 'create' && (
+                 <div className="bg-white rounded-[32px] border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="px-8 py-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                       <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Pending Batch ({operativeShift})</h3>
+                       <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">{pendingRequests.length} Vacancies</span>
+                    </div>
+                    {pendingRequests.length > 0 ? (
+                      <table className="w-full text-left">
+                        <thead>
+                           <tr className="bg-white border-b border-gray-50">
+                              <th className="px-8 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Station</th>
+                              <th className="px-4 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Rank</th>
+                              <th className="px-4 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Quals</th>
+                              <th className="px-8 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Action</th>
+                           </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                           {pendingRequests.map((r) => (
+                             <tr key={r.id} className="hover:bg-gray-50 transition-colors group">
+                                <td className="px-8 py-5">
+                                   <div className="font-black text-gray-900">{r.stations?.name}</div>
+                                   <div className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">{r.stations?.district}</div>
+                                </td>
+                                <td className="px-4 py-5 font-black text-blue-600 text-xs">
+                                   {r.specialist_type}
+                                </td>
+                                <td className="px-4 py-5">
+                                   <div className="flex flex-wrap gap-1">
+                                      {(typeof r.required_qualification_ids === 'string' ? JSON.parse(r.required_qualification_ids) : (r.required_qualification_ids || [])).map((q: string) => (
+                                        <span key={q} className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded text-[8px] font-black uppercase border border-gray-200">{q}</span>
+                                      ))}
+                                   </div>
+                                </td>
+                                <td className="px-8 py-5 text-right">
+                                   <button 
+                                     onClick={() => handleDeleteRequest(r.id)} 
+                                     disabled={loading}
+                                     className="text-gray-300 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg disabled:opacity-50"
+                                   >
+                                      <Trash2 className="w-4 h-4" />
+                                   </button>
+                                </td>
+                             </tr>
+                           ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="p-12 text-center">
+                         <Activity className="w-8 h-8 text-gray-200 mx-auto mb-4" />
+                         <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">No pending vacancies for this shift.</p>
+                      </div>
+                    )}
+                 </div>
+               )}
            </div>
           </main>
 
