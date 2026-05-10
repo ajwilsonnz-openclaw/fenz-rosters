@@ -101,7 +101,7 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
 
                 const generatedShifts: any[] = [];
                 const today = new Date();
-                today.setHours(0, 0, 0, 0); // Lock to local midnight to prevent drift
+                today.setHours(0, 0, 0, 0); 
 
                 for (let i = 1; i <= 30; i++) {
                     const targetDate = new Date(today);
@@ -112,7 +112,7 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                     const cbType = getCallbackType(ff.watch as Watch, targetDate);
                     const onDutyDay = getOnDutyWatch(targetDate, 'Day');
                     const onDutyNight = getOnDutyWatch(targetDate, 'Night');
-                    const localYMD = toLocalYMD(targetDate); // Strict local YYYY-MM-DD
+                    const localYMD = toLocalYMD(targetDate); 
 
                     const addDay = (isCb: boolean, desc: string) => generatedShifts.push({ id: `${localYMD}_Day`, date: targetDate, segment: 'Day', isCb, desc, onDuty: onDutyDay });
                     const addNight = (isCb: boolean, desc: string) => generatedShifts.push({ id: `${localYMD}_Night`, date: targetDate, segment: 'Night', isCb, desc, onDuty: onDutyNight });
@@ -129,7 +129,6 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                             addNight(false, 'Non-Callback');
                         }
                     } else {
-                        // Working days - only show the specific 24h callback opportunities
                         if (cbType === '#2a-EveningDay2') {
                             addNight(true, 'Callback: 24 Night');
                         } else if (cbType === '#2b-DayOfNight1') {
@@ -139,17 +138,17 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                 }
                 setShifts(generatedShifts);
 
-                // Fetch saved records and match strictly against YYYY-MM-DD
                 const { data: saved } = await supabase.from('availability').select('date, shift_type, preferences').eq('firefighter_id', ff.id);
                 if (saved) {
                     const savedSet = new Set<string>();
                     const savedPrefs: Record<string, Set<string>> = {};
 
                     saved.forEach(s => {
-                        const key = `${s.date}_${s.shift_type}`; // Database date is already YYYY-MM-DD
+                        const key = `${s.date}_${s.shift_type}`;
                         savedSet.add(key);
                         if (s.preferences && s.preferences.stations) {
-                            savedPrefs[key] = new Set(s.preferences.stations);
+                            // Ensure all IDs are strings to match UI state
+                            savedPrefs[key] = new Set(s.preferences.stations.map((id: any) => String(id)));
                         }
                     });
 
@@ -168,7 +167,8 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
     const districts = Array.from(new Set(stations.map(s => s.district))).filter(Boolean).sort();
 
     const getSortedStationsForDistrict = (distName: string) => {
-        const distStations = stations.filter(s => s.district === distName);
+        // Case-insensitive district matching
+        const distStations = stations.filter(s => s.district?.toLowerCase() === distName?.toLowerCase());
         if (distName === homeDistrict) {
             return distStations.sort((a, b) => {
                 if (a.id === ffDetails.station_id) return -1;
