@@ -24,6 +24,7 @@ export default function BottomNav({ className, currentTab, onNavigate, testEmail
         async function fetchPending() {
             let email = testEmail;
             if (!email) {
+                // Only perform session check if no testEmail is provided to prevent lock contention in Matrix
                 const { data: { session } } = await supabase.auth.getSession();
                 email = session?.user?.email;
             }

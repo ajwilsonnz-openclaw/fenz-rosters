@@ -64,8 +64,8 @@ export async function POST(request: NextRequest) {
         }
         requestExclusions[offer.ot_request_id].add(offer.firefighter_id);
 
-        // If the offer is currently pending, it temporarily occupies a slot
-        if (offer.status === 'sent') {
+        // If the offer is currently pending or accepted, it occupies a slot
+        if (offer.status === 'sent' || offer.status === 'accepted') {
           activeOffersCount[offer.ot_request_id] = (activeOffersCount[offer.ot_request_id] || 0) + 1;
         }
       });

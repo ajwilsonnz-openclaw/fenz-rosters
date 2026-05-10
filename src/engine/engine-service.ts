@@ -59,10 +59,37 @@ export async function triggerGlobalRerun(date: string, shift: 'Day' | 'Night') {
  * Server-only service to check for round completion.
  */
 export async function handleOfferResponse(offerId: number, response: 'accepted' | 'declined') {
-    const { data: offer } = await supabase.from('ot_offers').update({ status: response }).eq('id', offerId).select('*, ot_requests!inner(date, shift_type)').single();
+    const { data: offer } = await supabase.from('ot_offers')
+        .update({ status: response, responded_at: new Date().toISOString() })
+        .eq('id', offerId)
+        .select('*, ot_requests!inner(*)')
+        .single();
+        
     if (!offer) return;
 
     const req = offer.ot_requests;
+
+    if (response === 'accepted') {
+        // 1. Create the confirmed assignment
+        await supabase.from('ot_assignments').insert({
+            ot_request_id: offer.ot_request_id,
+            firefighter_id: offer.firefighter_id,
+            status: 'accepted',
+            distance_km: offer.metadata?.distance_km || 0,
+            assigned_at: offer.offered_at,
+            accepted_at: new Date().toISOString(),
+            callback_type: offer.metadata?.cascadePhase,
+            must_might_wont: offer.metadata?.must_might_wont || 'must'
+        });
+
+        // 2. Update the request count and status
+        const newFilled = (req.number_filled || 0) + 1;
+        await supabase.from('ot_requests').update({ 
+            number_filled: newFilled,
+            status: newFilled >= (req.number_of_slots || 1) ? 'filled' : 'pending'
+        }).eq('id', offer.ot_request_id);
+    }
+
     const { data: pending } = await supabase.from('ot_offers')
         .select('id, ot_requests!inner(date, shift_type)')
         .eq('ot_requests.date', req.date)

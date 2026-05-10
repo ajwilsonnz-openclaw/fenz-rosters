@@ -83,8 +83,8 @@ export function ConfirmedView({ testEmail }: { testEmail?: string }) {
                                 </div>
 
                                 <div className="mt-4 pt-4 border-t border-slate-50 flex justify-between items-center">
-                                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 font-black px-3 py-1 rounded-full text-[10px] uppercase">
-                                        Pending Allocation
+                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-black px-3 py-1 rounded-full text-[10px] uppercase">
+                                        Shift Confirmed
                                     </Badge>
                                     <span className="text-[9px] font-bold text-slate-400 uppercase">
                                         Subject to change

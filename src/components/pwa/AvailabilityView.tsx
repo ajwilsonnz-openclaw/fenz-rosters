@@ -48,6 +48,9 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
     const [shiftPrefs, setShiftPrefs] = React.useState<Record<string, Set<string>>>({});
     const [expandedDistrict, setExpandedDistrict] = React.useState<string | null>(null);
     const [submitting, setSubmitting] = React.useState(false);
+    const [pendingRemoval, setPendingRemoval] = React.useState<Set<string>>(new Set());
+    const [pendingUpdate, setPendingUpdate] = React.useState<Set<string>>(new Set());
+
 
     const [callbackFilter, setCallbackFilter] = React.useState<'ALL' | 'CALLBACK' | 'NON_CALLBACK'>('CALLBACK');
     const [segmentFilter, setSegmentFilter] = React.useState<'ALL' | 'DAY' | 'NIGHT'>('ALL');
@@ -221,13 +224,20 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
         setShiftPrefs({ ...shiftPrefs, [shiftId]: currentPrefs });
     };
 
+    const handleCancel = () => {
+        setSelectedShifts(new Set(initialAvailability));
+        setPendingRemoval(new Set());
+        setPendingUpdate(new Set());
+        setIsConfirmOpen(false);
+    };
+
     const handleFinalSubmit = async () => {
         if (!ffId) return;
         setSubmitting(true);
 
         const toInsert = Array.from(selectedShifts).filter(id => !initialAvailability.has(id));
-        const toDelete = Array.from(initialAvailability).filter(id => !selectedShifts.has(id));
-        const toUpdate = Array.from(selectedShifts).filter(id => initialAvailability.has(id));
+        const toDelete = Array.from(pendingRemoval);
+        const toUpdate = Array.from(pendingUpdate);
 
         try {
             if (toDelete.length > 0) {
@@ -254,11 +264,42 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                 await supabase.from('availability').upsert(upsertRecords, { onConflict: 'firefighter_id, date, shift_type' });
             }
 
-            setInitialAvailability(new Set(selectedShifts));
+            // Sync all states
+            const finalSelected = new Set(selectedShifts);
+            toDelete.forEach(id => finalSelected.delete(id));
+            
+            setInitialAvailability(new Set(finalSelected));
+            setSelectedShifts(new Set(finalSelected));
+            setPendingRemoval(new Set());
+            setPendingUpdate(new Set());
             setIsConfirmOpen(false);
         } catch (err) {
             console.error(err);
             alert("Error saving availability.");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleDeleteShift = async (shiftId: string) => {
+        if (!ffId) return;
+        const [dateStr, shiftType] = shiftId.split('_');
+        setSubmitting(true);
+        try {
+            await supabase.from('availability').delete()
+                .eq('firefighter_id', ffId)
+                .eq('date', dateStr)
+                .eq('shift_type', shiftType);
+            
+            const newSelected = new Set(selectedShifts);
+            newSelected.delete(shiftId);
+            const newInitial = new Set(initialAvailability);
+            newInitial.delete(shiftId);
+            
+            setSelectedShifts(newSelected);
+            setInitialAvailability(newInitial);
+        } catch (err) {
+            console.error(err);
         } finally {
             setSubmitting(false);
         }
@@ -273,7 +314,30 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
         return true;
     });
 
-    const hasSelections = selectedShifts.size > 0;
+    const isAdding = Array.from(selectedShifts).some(id => !initialAvailability.has(id));
+    const isManaging = pendingRemoval.size > 0 || pendingUpdate.size > 0;
+    const isDirty = isAdding || isManaging;
+
+    // Determine the primary action button text and state
+    let buttonText = "No Changes";
+    let buttonColor = "bg-slate-200 text-slate-400";
+    let isClickable = false;
+
+    if (isAdding) {
+        const addCount = Array.from(selectedShifts).filter(id => !initialAvailability.has(id)).length;
+        buttonText = `Add ${addCount} ${addCount === 1 ? 'Shift' : 'Shifts'}`;
+        buttonColor = "bg-[#005DAC] hover:bg-[#004a89] text-white shadow-lg";
+        isClickable = true;
+    } else if (pendingRemoval.size > 0) {
+        const remCount = pendingRemoval.size;
+        buttonText = `Remove ${remCount} ${remCount === 1 ? 'Shift' : 'Shifts'}`;
+        buttonColor = "bg-red-600 hover:bg-red-700 text-white shadow-lg";
+        isClickable = true;
+    } else if (pendingUpdate.size > 0) {
+        buttonText = "Update Preferences";
+        buttonColor = "bg-[#005DAC] hover:bg-[#004a89] text-white shadow-lg";
+        isClickable = true;
+    }
 
     return (
         <div className="bg-slate-50 min-h-screen pb-24">
@@ -281,15 +345,15 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                 {/* Filters Box */}
                 <div className="border border-slate-200 rounded-lg py-2 px-3 shadow-sm bg-white mb-6">
                     <div className="grid grid-cols-[60px_100px_1fr] items-center py-1">
-                        <CustomRadio id="cb-all" value="ALL" current={callbackFilter} onChange={setCallbackFilter} label="All" />
-                        <CustomRadio id="cb-callback" value="CALLBACK" current={callbackFilter} onChange={setCallbackFilter} label="Callback" />
-                        <CustomRadio id="cb-noncallback" value="NON_CALLBACK" current={callbackFilter} onChange={setCallbackFilter} label="Non-Callback" />
+                        <CustomRadio id={`${testEmail}-cb-all`} value="ALL" current={callbackFilter} onChange={setCallbackFilter} label="All" />
+                        <CustomRadio id={`${testEmail}-cb-callback`} value="CALLBACK" current={callbackFilter} onChange={setCallbackFilter} label="Callback" />
+                        <CustomRadio id={`${testEmail}-cb-noncallback`} value="NON_CALLBACK" current={callbackFilter} onChange={setCallbackFilter} label="Non-Callback" />
                     </div>
                     <Separator className="bg-slate-100 my-1" />
                     <div className="grid grid-cols-[60px_100px_1fr] items-center py-1">
-                        <CustomRadio id="seg-all" value="ALL" current={segmentFilter} onChange={setSegmentFilter} label="All" />
-                        <CustomRadio id="seg-day" value="DAY" current={segmentFilter} onChange={setSegmentFilter} label="Day" />
-                        <CustomRadio id="seg-night" value="NIGHT" current={segmentFilter} onChange={setSegmentFilter} label="Night" />
+                        <CustomRadio id={`${testEmail}-seg-all`} value="ALL" current={segmentFilter} onChange={setSegmentFilter} label="All" />
+                        <CustomRadio id={`${testEmail}-seg-day`} value="DAY" current={segmentFilter} onChange={setSegmentFilter} label="Day" />
+                        <CustomRadio id={`${testEmail}-seg-night`} value="NIGHT" current={segmentFilter} onChange={setSegmentFilter} label="Night" />
                     </div>
                 </div>
 
@@ -300,208 +364,261 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                     ) : filteredShifts.length === 0 ? (
                         <div className="text-center py-10 text-slate-400 font-medium text-sm">No shifts match your filters.</div>
                     ) : (
-                        filteredShifts.map((shift) => (
-                            <div
-                                key={shift.id}
-                                className={`flex items-center gap-4 rounded-2xl border p-4 bg-white shadow-sm cursor-pointer transition-all ${selectedShifts.has(shift.id) ? 'border-[#005DAC] ring-1 ring-[#005DAC]' : 'border-slate-200 hover:border-[#005DAC]/50'}`}
-                                onClick={() => {
-                                    const newSet = new Set<string>(selectedShifts);
-                                    if (newSet.has(shift.id)) newSet.delete(shift.id);
-                                    else newSet.add(shift.id);
-                                    setSelectedShifts(newSet);
-                                }}
-                            >
-                                <div className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center transition-colors border ${selectedShifts.has(shift.id) ? 'bg-[#005DAC] border-[#005DAC]' : 'border-slate-300'}`}>
-                                    {selectedShifts.has(shift.id) && <Check className="w-4 h-4 text-white" strokeWidth={3.5} />}
-                                </div>
+                        filteredShifts.map((shift) => {
+                            const isSelected = selectedShifts.has(shift.id);
+                            const isSaved = initialAvailability.has(shift.id);
+                            const isNew = isSelected && !isSaved;
+                            const isForRemoval = pendingRemoval.has(shift.id);
+                            const isForUpdate = pendingUpdate.has(shift.id);
 
-                                <div className="flex-grow">
-                                    <div className="font-semibold text-slate-800 text-[15px]">
-                                        {shift.date.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })}
-                                    </div>
-                                    <div className={`text-[13px] ${shift.isCb ? 'text-[#005DAC] font-medium' : 'text-slate-400'}`}>{shift.desc}</div>
-                                </div>
+                            // Determine visual state
+                            let cardStyles = "border-slate-200 hover:border-[#005DAC]/50 bg-white";
+                            if (isNew) cardStyles = "border-[#005DAC] ring-2 ring-[#005DAC] bg-white";
+                            else if (isForRemoval) cardStyles = "border-red-500 border-2 bg-red-50";
+                            else if (isForUpdate) cardStyles = "border-green-500 border-2 bg-green-50";
+                            else if (isSaved) cardStyles = "border-slate-300 bg-slate-100/80";
 
-                                <div className="flex items-center gap-3">
-                                    <span className="px-3 py-1.5 rounded-full text-white text-[10px] font-bold shadow-sm uppercase tracking-wider" style={{ backgroundColor: getWatchColor(shift.onDuty) }}>
-                                        {shift.onDuty}
-                                    </span>
-                                    <div className={`flex h-8 w-8 items-center justify-center rounded-full shadow-sm ${shift.segment === 'Day' ? 'bg-[#fef08a]' : 'bg-[#1e293b]'}`}>
-                                        {shift.segment === 'Day' ? <Sun className="h-4 w-4 text-yellow-600" strokeWidth={2.5} /> : <Moon className="h-4 w-4 text-white" strokeWidth={2.5} />}
+                            // Universal Swipe Logic (Pointer events work for both Mouse and Touch)
+                            let pointerStartX = 0;
+                            const handlePointerDown = (e: React.PointerEvent) => {
+                                if (!isSaved || isAdding) return;
+                                pointerStartX = e.clientX;
+                            };
+
+                            const handlePointerUp = (e: React.PointerEvent) => {
+                                if (!isSaved || isAdding) return;
+                                const pointerEndX = e.clientX;
+                                const delta = pointerEndX - pointerStartX;
+
+                                if (delta < -60) { // Swipe Left (Remove)
+                                    if (pendingUpdate.size > 0) return; // Block mixed modes
+
+                                    const newRem = new Set(pendingRemoval);
+                                    if (newRem.has(shift.id)) newRem.delete(shift.id);
+                                    else newRem.add(shift.id);
+                                    setPendingRemoval(newRem);
+                                } else if (delta > 60) { // Swipe Right (Update)
+                                    if (pendingRemoval.size > 0) return; // Block mixed modes
+
+                                    const newUpd = new Set(pendingUpdate);
+                                    if (newUpd.has(shift.id)) newUpd.delete(shift.id);
+                                    else newUpd.add(shift.id);
+                                    setPendingUpdate(newUpd);
+                                }
+                            };
+
+                            return (
+                                <div
+                                    key={shift.id}
+                                    className={`flex items-center gap-4 rounded-2xl border p-4 shadow-sm cursor-pointer transition-all duration-300 relative overflow-hidden select-none ${cardStyles} ${isForRemoval ? '-translate-x-4' : (isForUpdate ? 'translate-x-4' : '')}`}
+                                    onPointerDown={handlePointerDown}
+                                    onPointerUp={handlePointerUp}
+                                    onClick={() => {
+                                        if (isManaging) return; 
+                                        if (isSaved) return; 
+                                        
+                                        const newSet = new Set<string>(selectedShifts);
+                                        if (newSet.has(shift.id)) newSet.delete(shift.id);
+                                        else newSet.add(shift.id);
+                                        setSelectedShifts(newSet);
+                                    }}
+                                >
+                                    {/* Action Overlays for Swipe */}
+                                    {isForRemoval && <div className="absolute left-0 top-0 bottom-0 w-2 bg-red-600" />}
+                                    {isForUpdate && <div className="absolute right-0 top-0 bottom-0 w-2 bg-green-600" />}
+
+                                    {/* Tick only for NEW selections */}
+                                    <div className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center transition-colors border ${isNew ? 'bg-[#005DAC] border-[#005DAC]' : (isSaved ? 'hidden' : 'border-slate-300')}`}>
+                                        {isNew && <Check className="w-4 h-4 text-white" strokeWidth={3.5} />}
                                     </div>
+
+                                    <div className="flex-grow">
+                                        <div className="font-semibold text-slate-800 text-[15px]">
+                                            {shift.date.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })}
+                                        </div>
+                                        <div className={`text-[13px] ${shift.isCb ? 'text-[#005DAC] font-medium' : 'text-slate-400'}`}>{shift.desc}</div>
+                                    </div>
+
+                                    <div className="flex items-center gap-3">
+                                        <span className="px-3 py-1.5 rounded-full text-white text-[10px] font-bold shadow-sm uppercase tracking-wider" style={{ backgroundColor: getWatchColor(shift.onDuty) }}>
+                                            {shift.onDuty}
+                                        </span>
+                                        <div className={`flex h-8 w-8 items-center justify-center rounded-full shadow-sm ${shift.segment === 'Day' ? 'bg-[#fef08a]' : 'bg-[#1e293b]'}`}>
+                                            {shift.segment === 'Day' ? <Sun className="h-4 w-4 text-yellow-600" strokeWidth={2.5} /> : <Moon className="h-4 w-4 text-white" strokeWidth={2.5} />}
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Indicator for Swipe Actions */}
+                                    {isForRemoval && <div className="absolute right-4 top-2 text-[10px] font-black text-red-600 uppercase flex items-center gap-1"><X className="w-3 h-3"/> Remove</div>}
+                                    {isForUpdate && <div className="absolute left-4 top-2 text-[10px] font-black text-green-700 uppercase flex items-center gap-1"><Check className="w-3 h-3"/> Update</div>}
                                 </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </div>
 
-            <div className={`${isMatrix ? 'absolute' : 'fixed'} bottom-16 left-0 right-0 p-4 bg-slate-50/90 backdrop-blur z-40 max-w-md mx-auto border-t border-slate-200`}>
+            <div className={`${isMatrix ? 'absolute' : 'fixed'} bottom-16 left-0 right-0 p-4 bg-slate-50/90 backdrop-blur z-40 max-w-md mx-auto border-t border-slate-200 flex gap-3`}>
+                {isDirty && (
+                    <Button
+                        variant="outline"
+                        onClick={handleCancel}
+                        className="flex-1 py-6 text-[14px] font-bold rounded-xl border-slate-200 text-slate-500 hover:bg-slate-100 uppercase tracking-tight"
+                    >
+                        Cancel
+                    </Button>
+                )}
                 <Button
-                    onClick={() => hasSelections ? handleOpenConfirm() : null}
-                    className={`w-full py-6 text-[16px] font-semibold rounded-xl transition-all ${hasSelections
-                            ? "bg-[#005DAC] hover:bg-[#004a89] text-white shadow-lg"
-                            : "bg-[#80B8DB] hover:bg-[#6aa5c9] text-white/90 cursor-default"
-                        }`}
+                    onClick={() => {
+                        if (isClickable) {
+                            if (pendingRemoval.size > 0 && !isAdding && !pendingUpdate.size) {
+                                handleFinalSubmit();
+                            } else {
+                                setIsConfirmOpen(true);
+                            }
+                        }
+                    }}
+                    className={`py-6 text-[16px] font-semibold rounded-xl transition-all ${isDirty ? 'flex-[2]' : 'w-full'} ${buttonColor}`}
                 >
-                    {hasSelections ? `Submit ${selectedShifts.size} Shift(s)` : "Submit Availability"}
+                    {buttonText}
                 </Button>
             </div>
 
             {/* CONFIRMATION MODAL */}
             <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-                <DialogContent className="sm:max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col p-0 rounded-t-3xl sm:rounded-2xl gap-0 bg-slate-50">
+                <DialogContent className="sm:max-w-md w-[90%] max-h-[85%] overflow-hidden flex flex-col p-0 rounded-3xl sm:rounded-2xl gap-0 bg-slate-50 border-none shadow-2xl">
                     <DialogHeader className="px-6 pt-6 pb-4 bg-white border-b shrink-0 text-center relative">
-                        <button onClick={() => setIsConfirmOpen(false)} className="absolute right-4 top-4 p-2 text-slate-400 hover:text-slate-600">
-                            <X className="w-5 h-5" />
-                        </button>
-                        <DialogTitle className="text-[17px] font-black text-slate-800 tracking-tight">Confirm Availability & Preferences</DialogTitle>
+                        <DialogTitle className="text-[17px] font-black text-slate-800 tracking-tight">Review Changes</DialogTitle>
                         <DialogDescription className="text-xs font-medium text-slate-500 mt-1 px-4">
-                            Select the stations you are available for each shift. Your home district is selected by default.
+                            Review and confirm your availability updates.
                         </DialogDescription>
                     </DialogHeader>
 
-                    <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                        {Array.from(selectedShifts).sort().map(shiftId => {
-                            const [dateStr, segStr] = shiftId.split('_');
-                            const shiftDetails = shifts.find(s => s.id === shiftId);
-                            // Derive a proper Date object safely, falling back to string parse if necessary
-                            const shiftDate = shiftDetails ? shiftDetails.date : new Date(`${dateStr}T12:00:00Z`);
-                            const isExpanded = expandedDistrict === shiftId;
-
-                            return (
-                                <div key={shiftId} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-
-                                    {/* CARD HEADER */}
-                                    <div className="px-5 py-4 flex items-center justify-between border-b border-slate-100">
-                                        <span className="font-bold text-slate-800 text-[15px]">
-                                            {shiftDate.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })} <span className="text-slate-400 font-medium px-1">-</span> <span className="uppercase">{segStr}</span>
-                                        </span>
-                                        {shiftDetails && (
-                                            <span className="px-3 py-1 rounded text-white text-[10px] font-black uppercase shadow-sm tracking-wider" style={{ backgroundColor: getWatchColor(shiftDetails.onDuty) }}>
-                                                {shiftDetails.onDuty}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                        {/* REMOVALS SECTION */}
+                        {pendingRemoval.size > 0 && (
+                            <div className="space-y-3">
+                                <h3 className="text-[11px] font-black text-red-500 uppercase tracking-widest px-1">Removing ({pendingRemoval.size} {pendingRemoval.size === 1 ? 'shift' : 'shifts'})</h3>
+                                {Array.from(pendingRemoval).map(id => {
+                                    const [dateStr, segStr] = id.split('_');
+                                    const d = new Date(`${dateStr}T12:00:00Z`);
+                                    return (
+                                        <div key={id} className="bg-red-50/50 border border-red-100 rounded-xl p-4 flex justify-between items-center opacity-70">
+                                            <span className="font-bold text-slate-700 text-sm">
+                                                {d.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })} - {segStr}
                                             </span>
-                                        )}
-                                    </div>
-
-                                    <div className="p-4 space-y-4">
-                                        {/* DISTRICT MASTER TOGGLE BUTTONS */}
-                                        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-                                            {districts.map(d => {
-                                                const distStations = getSortedStationsForDistrict(d);
-                                                const selectedCount = distStations.filter(s => shiftPrefs[shiftId]?.has(String(s.id))).length;
-                                                const totalCount = distStations.length;
-                                                const isAllSelected = selectedCount === totalCount && totalCount > 0;
-
-                                                return (
-                                                    <button
-                                                        key={`btn-${d}`}
-                                                        onClick={() => {
-                                                            const currentPrefs = new Set(shiftPrefs[shiftId] || new Set());
-                                                            distStations.forEach(s => {
-                                                                if (isAllSelected) currentPrefs.delete(String(s.id));
-                                                                else currentPrefs.add(String(s.id));
-                                                            });
-                                                            setShiftPrefs({ ...shiftPrefs, [shiftId]: currentPrefs });
-                                                        }}
-                                                        className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-colors border ${isAllSelected ? 'bg-[#005DAC] text-white border-[#005DAC]' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
-                                                    >
-                                                        {d}
-                                                    </button>
-                                                )
-                                            })}
+                                            <span className="text-[10px] font-black text-red-600 uppercase">Withdrawing</span>
                                         </div>
+                                    );
+                                })}
+                            </div>
+                        )}
 
-                                        {/* ACCORDION LIST */}
-                                        <div className="border border-slate-100 rounded-xl overflow-hidden divide-y divide-slate-100">
-                                            {districts.map(d => {
-                                                const distStations = getSortedStationsForDistrict(d);
-                                                const selectedCount = distStations.filter(s => shiftPrefs[shiftId]?.has(String(s.id))).length;
-                                                const totalCount = distStations.length;
-                                                const isDistExpanded = expandedDistrict === `${shiftId}_${d}`;
+                        {/* ADDITIONS / UPDATES SECTION */}
+                        {([...Array.from(selectedShifts).filter(id => !initialAvailability.has(id)), ...Array.from(pendingUpdate)]).length > 0 && (
+                            <div className="space-y-4">
+                                <h3 className="text-[11px] font-black text-[#005DAC] uppercase tracking-widest px-1">Adding / Updating ({([...Array.from(selectedShifts).filter(id => !initialAvailability.has(id)), ...Array.from(pendingUpdate)]).length} {([...Array.from(selectedShifts).filter(id => !initialAvailability.has(id)), ...Array.from(pendingUpdate)]).length === 1 ? 'shift' : 'shifts'})</h3>
+                                {[...Array.from(selectedShifts).filter(id => !initialAvailability.has(id)), ...Array.from(pendingUpdate)].sort().map(shiftId => {
+                                    const [dateStr, segStr] = shiftId.split('_');
+                                    const shiftDetails = shifts.find(s => s.id === shiftId);
+                                    const shiftDate = shiftDetails ? shiftDetails.date : new Date(`${dateStr}T12:00:00Z`);
+                                    const isExpanded = expandedDistrict === shiftId;
 
-                                                return (
-                                                    <div key={`acc-${d}`} className="flex flex-col">
-                                                        {/* ACCORDION TRIGGER */}
-                                                        <div
-                                                            className="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
-                                                            onClick={() => setExpandedDistrict(isDistExpanded ? null : `${shiftId}_${d}`)}
-                                                        >
-                                                            <span className="text-[13px] font-bold text-slate-800">{d}</span>
-                                                            <div className="flex items-center gap-3">
-                                                                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
-                                                                    {selectedCount} / {totalCount}
-                                                                </span>
-                                                                {isDistExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                                                            </div>
-                                                        </div>
+                                    return (
+                                        <div key={shiftId} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                                            <div className="px-5 py-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
+                                                <span className="font-bold text-slate-800 text-sm">
+                                                    {shiftDate.toLocaleDateString('en-NZ', { weekday: 'short', day: 'numeric', month: 'short' })} - {segStr}
+                                                </span>
+                                                {shiftDetails && (
+                                                    <span className="px-3 py-1 rounded text-white text-[9px] font-black uppercase" style={{ backgroundColor: getWatchColor(shiftDetails.onDuty) }}>
+                                                        {shiftDetails.onDuty}
+                                                    </span>
+                                                )}
+                                            </div>
 
-                                                        {/* ACCORDION CONTENT */}
-                                                        {isDistExpanded && (
-                                                            <div className="bg-slate-50 border-t border-slate-100 divide-y divide-slate-100">
+                                            <div className="p-4 space-y-4">
+                                                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                                                    {districts.map(d => {
+                                                        const distStations = getSortedStationsForDistrict(d);
+                                                        const selectedCount = distStations.filter(s => shiftPrefs[shiftId]?.has(String(s.id))).length;
+                                                        const totalCount = distStations.length;
+                                                        const isAllSelected = selectedCount === totalCount && totalCount > 0;
 
-                                                                {/* SELECT ALL BAR */}
-                                                                <div className="px-5 py-2.5 flex justify-between items-center bg-slate-100/50">
-                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                                                                        {d === homeDistrict ? "Smart Distance Enabled" : "Individual Selection"}
-                                                                    </span>
-                                                                    <button
-                                                                        className="text-[11px] font-bold text-[#005DAC] hover:underline"
-                                                                        onClick={() => toggleEntireDistrict(shiftId, distStations, selectedCount === totalCount)}
-                                                                    >
-                                                                        {selectedCount === totalCount ? "Deselect All" : "Select All"}
-                                                                    </button>
+                                                        return (
+                                                            <button
+                                                                key={`btn-${d}`}
+                                                                onClick={() => {
+                                                                    const currentPrefs = new Set(shiftPrefs[shiftId] || new Set());
+                                                                    distStations.forEach(s => {
+                                                                        if (isAllSelected) currentPrefs.delete(String(s.id));
+                                                                        else currentPrefs.add(String(s.id));
+                                                                    });
+                                                                    setShiftPrefs({ ...shiftPrefs, [shiftId]: currentPrefs });
+                                                                }}
+                                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black whitespace-nowrap transition-colors border ${isAllSelected ? 'bg-[#005DAC] text-white border-[#005DAC]' : 'bg-white text-slate-500 border-slate-200'}`}
+                                                            >
+                                                                {d}
+                                                            </button>
+                                                        )
+                                                    })}
+                                                </div>
+
+                                                <div className="border border-slate-100 rounded-lg overflow-hidden divide-y divide-slate-50">
+                                                    {districts.map(d => {
+                                                        const distStations = getSortedStationsForDistrict(d);
+                                                        const selectedCount = distStations.filter(s => shiftPrefs[shiftId]?.has(String(s.id))).length;
+                                                        const isDistExpanded = expandedDistrict === `${shiftId}_${d}`;
+
+                                                        return (
+                                                            <div key={`acc-${d}`} className="flex flex-col">
+                                                                <div
+                                                                    className="px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-50"
+                                                                    onClick={() => setExpandedDistrict(isDistExpanded ? null : `${shiftId}_${d}`)}
+                                                                >
+                                                                    <span className="text-xs font-bold text-slate-700">{d}</span>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[10px] font-bold text-slate-400">{selectedCount} Stations</span>
+                                                                        {isDistExpanded ? <ChevronUp className="w-3 h-3 text-slate-300" /> : <ChevronDown className="w-3 h-3 text-slate-300" />}
+                                                                    </div>
                                                                 </div>
 
-                                                                {distStations.map(station => {
-                                                                    const isHomeDist = d === homeDistrict;
-                                                                    const isSelected = shiftPrefs[shiftId]?.has(String(station.id));
-                                                                    const isHomeStation = station.id === ffDetails?.station_id;
-                                                                    const distKm = homeDistances[station.name] || 0;
-
-                                                                    return (
-                                                                        <label key={station.id} className="flex items-center justify-between p-4 pl-6 cursor-pointer hover:bg-slate-100 transition-colors">
-                                                                            <div className="flex items-center gap-4">
-                                                                                <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-[#005DAC] border-[#005DAC]' : 'border-slate-300 bg-white'}`}>
-                                                                                    {isSelected && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
-                                                                                </div>
-                                                                                <span className={`text-[14px] font-medium ${isSelected ? 'text-slate-900' : 'text-slate-500'}`}>{station.name}</span>
-                                                                            </div>
-                                                                            <div className="flex items-center gap-2">
-                                                                                {isHomeDist && !isHomeStation && (
-                                                                                    <span className="text-[11px] font-bold text-slate-400">{distKm} km</span>
-                                                                                )}
-                                                                                {isHomeStation && (
-                                                                                    <span className="text-[10px] font-black text-[#005DAC] bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase tracking-wider">Home</span>
-                                                                                )}
-                                                                            </div>
-                                                                            <input
-                                                                                type="checkbox"
-                                                                                className="hidden"
-                                                                                checked={isSelected}
-                                                                                onChange={() => handleStationToggle(shiftId, String(station.id), isHomeDist, distStations)}
-                                                                            />
-                                                                        </label>
-                                                                    )
-                                                                })}
+                                                                {isDistExpanded && (
+                                                                    <div className="bg-slate-50 border-t border-slate-50 divide-y divide-slate-50">
+                                                                        {distStations.map(station => {
+                                                                            const isSelected = shiftPrefs[shiftId]?.has(String(station.id));
+                                                                            return (
+                                                                                <label key={station.id} className="flex items-center justify-between p-3 pl-6 cursor-pointer hover:bg-white transition-colors">
+                                                                                    <div className="flex items-center gap-3">
+                                                                                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? 'bg-[#005DAC] border-[#005DAC]' : 'border-slate-300 bg-white'}`}>
+                                                                                            {isSelected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={4} />}
+                                                                                        </div>
+                                                                                        <span className={`text-[13px] font-medium ${isSelected ? 'text-slate-900' : 'text-slate-400'}`}>{station.name}</span>
+                                                                                    </div>
+                                                                                    <input type="checkbox" className="hidden" checked={isSelected} onChange={() => handleStationToggle(shiftId, String(station.id), d === homeDistrict, distStations)} />
+                                                                                </label>
+                                                                            )
+                                                                        })}
+                                                                    </div>
+                                                                )}
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                )
-                                            })}
+                                                        )
+                                                    })}
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
 
                     <div className="p-4 border-t bg-white shrink-0 flex gap-3 pb-safe">
-                        <Button variant="outline" onClick={() => setIsConfirmOpen(false)} className="flex-1 py-6 rounded-xl text-slate-600 font-bold border-slate-200 shadow-sm bg-white hover:bg-slate-50">
+                        <Button variant="outline" onClick={handleCancel} className="flex-1 py-6 rounded-xl text-slate-600 font-bold border-slate-200">
                             Cancel
                         </Button>
                         <Button onClick={handleFinalSubmit} disabled={submitting} className="flex-[2] py-6 rounded-xl bg-[#005DAC] hover:bg-[#004a89] text-white font-bold shadow-md">
-                            {submitting ? "Saving..." : "Save Preferences"}
+                            {submitting ? "Saving..." : "Confirm All Changes"}
                         </Button>
                     </div>
                 </DialogContent>

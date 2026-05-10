@@ -59,8 +59,10 @@ const renderAuditTrail = (r: any) => {
   if (r.isAssigned) {
     if (r.isOffer) {
       return <span className={`${badgeBase} bg-amber-50 text-amber-600 border-amber-200`}>Offer Pending</span>;
+    } else if (r.status === 'accepted') {
+      return <span className={`${badgeBase} bg-green-50 text-green-600 border-green-200`}>Offer Accepted</span>;
     } else {
-      return <span className={`${badgeBase} bg-green-50 text-green-600 border-green-200`}>Overtime Filled</span>;
+      return <span className={`${badgeBase} bg-blue-50 text-blue-600 border-blue-200`}>Manual Assign</span>;
     }
   }
 
@@ -345,10 +347,10 @@ function FilledContent() {
       if (thresholdString === 'must') thresholdString = 'Must';
 
       return {
-        ...ff, district: ff?.district, isAssigned: true, isOffer: a.isOffer, assignId: a.id, ot_request_id: a.ot_request_id,
+        ...ff, district: ff?.district, isAssigned: true, isOffer: a.isOffer, status: a.status, assignId: a.id, ot_request_id: a.ot_request_id,
         dist: a.distance_km, otCount, tgtStation: req?.stations?.name, reqDistrict,
         threshold: thresholdString || 'Must',
-        reason: a.isOffer ? 'Offer Pending' : 'Overtime Filled'
+        reason: a.isOffer ? 'Offer Pending' : (a.status === 'accepted' ? 'Offer Accepted' : 'Manual Assign')
       };
     });
 
