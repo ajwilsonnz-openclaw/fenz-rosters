@@ -279,7 +279,19 @@ function FilledContent() {
   };
 
   useEffect(() => {
-    if (isHydrated) fetchData();
+    if (isHydrated) {
+      fetchData();
+
+      // Subscribe to real-time updates for assignments and offers
+      const channel = supabase.channel('filled-dashboard-sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_assignments' }, () => fetchData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_offers' }, () => fetchData())
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
   }, [operativeDate, operativeShift, isHydrated]);
 
   const handleRemoveClick = (assignment: any) => {

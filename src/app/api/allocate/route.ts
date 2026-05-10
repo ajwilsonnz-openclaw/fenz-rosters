@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
               const payload = JSON.stringify({
                 title: 'FENZ OT: New Offer',
                 body: `You have a new overtime offer for ${res.station_name}.`,
-                url: '/offers'
+                url: '/mobile/offers'
               });
               webPush.sendNotification(data.subscription, payload).catch(err => console.error("Web Push Error:", err));
             }
