@@ -1,17 +1,26 @@
 {
-    "name": "Rosters",
+    "id": "nz.fenz.rosters",
+    "name": "FENZ Rosters",
     "short_name": "Rosters",
-    "description": "Fire and Emergency NZ Rosters",
+    "description": "Fire and Emergency NZ Overtime Roster Management",
     "start_url": "/mobile/offers",
     "display": "standalone",
+    "orientation": "portrait",
     "background_color": "#f8fafc",
     "theme_color": "#005DAC",
+    "categories": ["productivity", "utilities"],
     "icons": [
         {
             "src": "/fenz-logo.svg",
             "sizes": "any",
             "type": "image/svg+xml",
             "purpose": "any"
+        },
+        {
+            "src": "/fenz-logo.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "maskable"
         }
     ]
 }
