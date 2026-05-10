@@ -396,7 +396,22 @@ function FilledContent() {
       const otCount = (isOfficerGroup && isHomeStation) ? Math.max(0, rawOt - 2) : rawOt;
       let threshold = 'Backup';
       const declinedOffer = filledAssignments.find(a => a.firefighter_id === ff.id && a.ot_request_id === bestReq.id && a.status === 'declined');
-      if (declinedOffer) return { ...ff, isAssigned: false, tgtStation: bestReq.station_name, reqDistrict: bestReq.district, dist: minDist === 999 ? 'N/A' : minDist, otCount, threshold: 'Backup', reason: `Declined: ${declinedOffer.declined_reason || 'No reason'}` };
+      if (declinedOffer) {
+        let storedThreshold = declinedOffer.must_might_wont || 'Backup';
+        if (storedThreshold === 'might') storedThreshold = 'Maybe';
+        if (storedThreshold === 'must') storedThreshold = 'Must';
+        
+        return { 
+            ...ff, 
+            isAssigned: false, 
+            tgtStation: bestReq.station_name, 
+            reqDistrict: bestReq.district, 
+            dist: minDist === 999 ? 'N/A' : minDist, 
+            otCount, 
+            threshold: storedThreshold, 
+            reason: `Declined: ${declinedOffer.declined_reason || 'No reason'}` 
+        };
+      }
       let reasonParts: string[] = [];
       if (unqualifiedReqs.length > 0 && qualifiedReqs.length === 0) reasonParts.push(`Not qualified for: ${Array.from(new Set(unqualifiedReqs.map((r: any) => r.station_name))).join(', ')}.`);
       if (qualifiedReqs.length > 0) {
@@ -404,11 +419,32 @@ function FilledContent() {
         if (assignedToThisReq.length > 0) {
           assignedToThisReq.sort((a, b) => { if (a.otCount !== b.otCount) return a.otCount - b.otCount; return (a.dist || 0) - (b.dist || 0); });
           const worstWinner = assignedToThisReq[assignedToThisReq.length - 1];
-          if (otCount < worstWinner.otCount) threshold = 'Must'; else if (otCount === worstWinner.otCount) threshold = 'Maybe'; else threshold = 'Backup';
+          if (otCount < worstWinner.otCount) threshold = 'Must'; 
+          else if (otCount === worstWinner.otCount) threshold = 'Maybe'; 
+          else threshold = 'Backup';
           reasonParts.push(`Bypassed for ${bestReq.station_name} by ${worstWinner.first_name} ${worstWinner.last_name} (Distance: ${worstWinner.dist || 0}km).`);
         } else {
           const reqFilledElsewhere = filledAssignments.filter(a => a.ot_request_id === bestReq.id && a.status !== 'declined').length;
-          if (reqFilledElsewhere >= bestReq.number_of_slots) { threshold = 'Backup'; reasonParts.push(`Group not required. Vacancies filled by higher priority.`); } else { threshold = 'Must'; reasonParts.push(`Bypassed for ${bestReq.station_name} (Pending/Unfilled).`); }
+          const slotsLeft = (bestReq.number_of_slots || 1) - reqFilledElsewhere;
+          
+          if (slotsLeft <= 0) { 
+            threshold = 'Backup'; 
+            reasonParts.push(`Group not required. Vacancies filled by higher priority.`); 
+          } else {
+            // Tie-break detection for unassigned:
+            // Count how many people in this SAME group have the SAME OT count.
+            const samePriorityCount = baselineData.firefighters.filter(f => {
+                if (globalAssignedIds.has(f.id)) return false;
+                const elig = getEligibleGroups(f, bestReq as any, isSurplus);
+                if (!elig.some(g => g.id === group.id)) return false;
+                const rawOt = group.isCallback ? (isDay ? f.ot_count_callback_days : f.ot_count_callback_nights) : (isDay ? f.ot_count_noncallback_days : f.ot_count_noncallback_nights);
+                const ffOt = (group.targetRank !== 'FF' && f.station_id === bestReq.station_id) ? Math.max(0, rawOt - 2) : rawOt;
+                return ffOt === otCount;
+            }).length;
+
+            threshold = samePriorityCount > slotsLeft ? 'Maybe' : 'Must';
+            reasonParts.push(`Bypassed for ${bestReq.station_name} (Pending/Unfilled).`); 
+          }
         }
       }
       return { ...ff, isAssigned: false, tgtStation: bestReq.station_name, reqDistrict: bestReq.district, dist: minDist === 999 ? 'N/A' : minDist, otCount, threshold, reason: reasonParts.join(' ').trim() };

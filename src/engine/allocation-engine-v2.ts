@@ -202,7 +202,21 @@ export async function allocateV2(
         required_rank: req.required_rank,
         phasesUsed: Array.from(new Set(assigned.map(c => c.group.phase))),
         assignedFirefighters: assigned.map(c => {
-            busyFFs.add(c.ff.id); // Mark as busy for subsequent requests
+            busyFFs.add(c.ff.id);
+            
+            // Intelligent Threshold Calculation
+            let threshold = 'Must';
+            const firstLoser = candidates[req.slots];
+            
+            // If there's a tie in Group and OT Count with the first person who didn't make the cut, 
+            // then it's a 'Maybe' situation.
+            if (firstLoser && firstLoser.group.id === c.group.id && firstLoser.otCount === c.otCount) {
+                threshold = 'Maybe';
+            }
+
+            // Override for ride-up/down or distant OOD if desired
+            if (c.group.id > 10) threshold = 'Backup';
+
             return {
               firefighter_id: c.ff.id,
               firefighter_name: `${c.ff.first_name} ${c.ff.last_name}`,
@@ -210,7 +224,7 @@ export async function allocateV2(
               home_station: c.ff.station_name,
               distance: c.dist,
               cascadePhase: c.group.phase,
-              threshold: c.group.id <= 6 ? 'Must' : (c.group.id <= 10 ? 'Might' : 'Wont'),
+              threshold: threshold,
               assignedAtGroup: c.group.id
             }
         })
