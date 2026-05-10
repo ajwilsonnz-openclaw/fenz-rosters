@@ -46,6 +46,14 @@ export function ConfirmedView({ testEmail }: { testEmail?: string }) {
             setLoading(false);
         }
         fetchData();
+
+        const channel = supabase.channel('mobile-confirmed-sync')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_assignments' }, () => fetchData())
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [testEmail]);
 
     const calendarDays = getCalendarDays(viewDate, 'Day'); 

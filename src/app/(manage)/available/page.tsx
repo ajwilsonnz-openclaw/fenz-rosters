@@ -112,60 +112,80 @@ function RostersContent() {
     sessionStorage.setItem('fenz_ranks', JSON.stringify(selectedRanks));
   }, [regionParam, districtParam, selectedRanks, isHydrated]);
 
+  const fetchData = async () => {
+    setLoading(true);
+    const dateStr = operativeDate.toLocaleDateString('en-CA');
+
+    const { data: stationData } = await supabase.from('stations').select('*').order('name');
+    if (stationData) setStations(stationData);
+
+    const { data: ffData } = await supabase.from('firefighters').select(`*, stations (name, district)`).eq('is_active', true);
+    const { data: reqData } = await supabase.from('ot_requests').select(`*, stations (name, district)`).eq('date', dateStr).eq('shift_type', operativeShift);
+
+    const { data: assignmentData } = await supabase.from('ot_assignments').select('firefighter_id, ot_requests!inner(date, shift_type)').eq('ot_requests.date', dateStr).eq('ot_requests.shift_type', operativeShift).neq('status', 'declined');
+    
+    // Also consider pending offers as "assigned" for availability purposes
+    const { data: offerData } = await supabase.from('ot_offers').select('firefighter_id, ot_requests!inner(date, shift_type)').eq('ot_requests.date', dateStr).eq('ot_requests.shift_type', operativeShift).eq('status', 'sent');
+
+    const assignedIds = new Set([
+        ...(assignmentData?.map((a: any) => a.firefighter_id) || []),
+        ...(offerData?.map((o: any) => o.firefighter_id) || [])
+    ]);
+
+    const { data: availData } = await supabase.from('availability').select('firefighter_id').eq('date', dateStr).eq('shift_type', operativeShift);
+    const availableIds = new Set(availData?.map((a: any) => a.firefighter_id) || []);
+
+    const mappedFF = (ffData || []).map(ff => {
+      const station = Array.isArray(ff.stations) ? ff.stations[0] : ff.stations;
+      const cbType = getCallbackType(ff.watch as Watch, operativeDate);
+      const isCb = (
+        (cbType === '#1-BeforeDay1' && operativeShift === 'Day') ||
+        (cbType === '#2b-DayOfNight1' && operativeShift === 'Day') ||
+        (cbType === '#2a-EveningDay2' && operativeShift === 'Night') ||
+        (cbType === '#3-AfterLastNight' && operativeShift === 'Night')
+      );
+
+      return {
+        ...ff,
+        isCallback: isCb,
+        station_name: station?.name || 'Unknown',
+        district: station?.district || ff.district || 'Unknown',
+        otCount: (operativeShift === 'Day' ? ff.ot_count_days : ff.ot_count_nights) || 0,
+        qualifications: typeof ff.qualifications === 'string' ? JSON.parse(ff.qualifications) : (ff.qualifications || {})
+      };
+    });
+
+    const mappedRequests = (reqData || []).map(r => {
+      const station = Array.isArray(r.stations) ? r.stations[0] : r.stations;
+      const rank = r.specialist_type || 'FF';
+      let quals = [];
+      try { quals = typeof r.required_qualification_ids === 'string' ? JSON.parse(r.required_qualification_ids) : (r.required_qualification_ids || []); } catch (e) { }
+      return {
+        ...r, station_name: station?.name || 'Unknown', district: station?.district || r.district || 'Unknown',
+        required_rank: rank, quals
+      };
+    });
+
+    setBaselineData({ firefighters: mappedFF, requests: mappedRequests, assignedIds, availableIds });
+    setLoading(false);
+  };
+
   useEffect(() => {
-    if (!isHydrated) return;
-    async function fetchData() {
-      setLoading(true);
-      const dateStr = [operativeDate.getFullYear(), String(operativeDate.getMonth() + 1).padStart(2, '0'), String(operativeDate.getDate()).padStart(2, '0')].join('-');
+    if (isHydrated) {
+      fetchData();
 
-      const { data: stationData } = await supabase.from('stations').select('*').order('name');
-      if (stationData) setStations(stationData);
+      // Real-time subscriptions
+      const channel = supabase.channel('available-dashboard-sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_requests' }, () => fetchData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_assignments' }, () => fetchData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_offers' }, () => fetchData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'availability' }, () => fetchData())
+        .subscribe();
 
-      const { data: ffData } = await supabase.from('firefighters').select(`*, stations (name, district)`).eq('is_active', true);
-      const { data: reqData } = await supabase.from('ot_requests').select(`*, stations (name, district)`).eq('date', dateStr).eq('shift_type', operativeShift);
-
-      const { data: assignmentData } = await supabase.from('ot_assignments').select('firefighter_id, ot_requests!inner(date, shift_type)').eq('ot_requests.date', dateStr).eq('ot_requests.shift_type', operativeShift).neq('status', 'declined');
-      const assignedIds = new Set(assignmentData?.map((a: any) => a.firefighter_id) || []);
-
-      const { data: availData } = await supabase.from('availability').select('firefighter_id').eq('date', dateStr).eq('shift_type', operativeShift);
-      const availableIds = new Set(availData?.map((a: any) => a.firefighter_id) || []);
-
-      const mappedFF = (ffData || []).map(ff => {
-        const station = Array.isArray(ff.stations) ? ff.stations[0] : ff.stations;
-        
-        const cbType = getCallbackType(ff.watch as Watch, operativeDate);
-        const isCb = (
-          (cbType === '#1-BeforeDay1' && operativeShift === 'Day') ||
-          (cbType === '#2b-DayOfNight1' && operativeShift === 'Day') ||
-          (cbType === '#2a-EveningDay2' && operativeShift === 'Night') ||
-          (cbType === '#3-AfterLastNight' && operativeShift === 'Night')
-        );
-
-        return {
-          ...ff,
-          isCallback: isCb,
-          station_name: station?.name || 'Unknown',
-          district: station?.district || ff.district || 'Unknown',
-          otCount: (operativeShift === 'Day' ? ff.ot_count_days : ff.ot_count_nights) || 0,
-          qualifications: typeof ff.qualifications === 'string' ? JSON.parse(ff.qualifications) : (ff.qualifications || {})
-        };
-      });
-
-      const mappedRequests = (reqData || []).map(r => {
-        const station = Array.isArray(r.stations) ? r.stations[0] : r.stations;
-        const rank = r.specialist_type || 'FF';
-        let quals = [];
-        try { quals = typeof r.required_qualification_ids === 'string' ? JSON.parse(r.required_qualification_ids) : (r.required_qualification_ids || []); } catch (e) { }
-        return {
-          ...r, station_name: station?.name || 'Unknown', district: station?.district || r.district || 'Unknown',
-          required_rank: rank, quals
-        };
-      });
-
-      setBaselineData({ firefighters: mappedFF, requests: mappedRequests, assignedIds, availableIds });
-      setLoading(false);
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
-    fetchData();
   }, [operativeShift, operativeDate, isHydrated]);
 
   const handleDeleteRequest = async (requestId: number) => {

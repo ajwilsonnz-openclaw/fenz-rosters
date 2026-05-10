@@ -23,7 +23,15 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
 
     React.useEffect(() => {
         fetchMyOffers();
-    }, [testEmail, supabase]);
+
+        const channel = supabase.channel('mobile-offers-sync')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_offers' }, () => fetchMyOffers())
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [testEmail]);
 
     const fetchMyOffers = async () => {
         setLoading(true);
