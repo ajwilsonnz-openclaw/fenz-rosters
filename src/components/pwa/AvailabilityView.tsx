@@ -339,6 +339,8 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
         isClickable = true;
     }
 
+    const pointerStartPos = React.useRef<{ id: string, x: number } | null>(null);
+
     return (
         <div className="bg-slate-50 min-h-screen pb-24">
             <div className="px-4 py-5 max-w-md mx-auto">
@@ -373,33 +375,30 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
 
                             // Determine visual state
                             let cardStyles = "border-slate-200 hover:border-[#005DAC]/50 bg-white";
-                            if (isNew) cardStyles = "border-[#005DAC] ring-2 ring-[#005DAC] bg-white";
-                            else if (isForRemoval) cardStyles = "border-red-500 border-2 bg-red-50";
-                            else if (isForUpdate) cardStyles = "border-green-500 border-2 bg-green-50";
-                            else if (isSaved) cardStyles = "border-slate-300 bg-slate-100/80";
+                            if (isNew) cardStyles = "border-[#005DAC] border-2 bg-white";
+                            else if (isForRemoval) cardStyles = "border-red-600 border-2 bg-red-50";
+                            else if (isForUpdate) cardStyles = "border-green-600 border-2 bg-green-50";
+                            else if (isSaved) cardStyles = "border-slate-300 bg-slate-100";
 
-                            // Universal Swipe Logic (Pointer events work for both Mouse and Touch)
-                            let pointerStartX = 0;
                             const handlePointerDown = (e: React.PointerEvent) => {
                                 if (!isSaved || isAdding) return;
-                                pointerStartX = e.clientX;
+                                pointerStartPos.current = { id: shift.id, x: e.clientX };
                             };
 
                             const handlePointerUp = (e: React.PointerEvent) => {
-                                if (!isSaved || isAdding) return;
-                                const pointerEndX = e.clientX;
-                                const delta = pointerEndX - pointerStartX;
+                                if (!isSaved || isAdding || !pointerStartPos.current || pointerStartPos.current.id !== shift.id) return;
+                                
+                                const delta = e.clientX - pointerStartPos.current.x;
+                                pointerStartPos.current = null;
 
-                                if (delta < -60) { // Swipe Left (Remove)
-                                    if (pendingUpdate.size > 0) return; // Block mixed modes
-
+                                if (delta < -50) { // Swipe Left (Remove)
+                                    if (pendingUpdate.size > 0) return;
                                     const newRem = new Set(pendingRemoval);
                                     if (newRem.has(shift.id)) newRem.delete(shift.id);
                                     else newRem.add(shift.id);
                                     setPendingRemoval(newRem);
-                                } else if (delta > 60) { // Swipe Right (Update)
-                                    if (pendingRemoval.size > 0) return; // Block mixed modes
-
+                                } else if (delta > 50) { // Swipe Right (Update)
+                                    if (pendingRemoval.size > 0) return;
                                     const newUpd = new Set(pendingUpdate);
                                     if (newUpd.has(shift.id)) newUpd.delete(shift.id);
                                     else newUpd.add(shift.id);
@@ -411,8 +410,10 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                                 <div
                                     key={shift.id}
                                     className={`flex items-center gap-4 rounded-2xl border p-4 shadow-sm cursor-pointer transition-all duration-300 relative overflow-hidden select-none ${cardStyles} ${isForRemoval ? '-translate-x-4' : (isForUpdate ? 'translate-x-4' : '')}`}
+                                    style={{ touchAction: 'pan-y' }}
                                     onPointerDown={handlePointerDown}
                                     onPointerUp={handlePointerUp}
+                                    onPointerLeave={() => { pointerStartPos.current = null; }}
                                     onClick={() => {
                                         if (isManaging) return; 
                                         if (isSaved) return; 
@@ -428,7 +429,7 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                                     {isForUpdate && <div className="absolute right-0 top-0 bottom-0 w-2 bg-green-600" />}
 
                                     {/* Tick only for NEW selections */}
-                                    <div className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center transition-colors border ${isNew ? 'bg-[#005DAC] border-[#005DAC]' : (isSaved ? 'hidden' : 'border-slate-300')}`}>
+                                    <div className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center transition-colors border-2 ${isNew ? 'bg-[#005DAC] border-[#005DAC]' : (isSaved ? 'hidden' : 'border-slate-300')}`}>
                                         {isNew && <Check className="w-4 h-4 text-white" strokeWidth={3.5} />}
                                     </div>
 
