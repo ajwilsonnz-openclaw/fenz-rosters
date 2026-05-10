@@ -272,6 +272,17 @@ function RostersContent() {
     );
   };
 
+  if (!isHydrated) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#f3f7fa]">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <Activity className="w-8 h-8 text-blue-500" />
+          <span className="text-sm font-black text-gray-400 uppercase tracking-widest">Loading Workspace...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <DateToolbar operativeDate={operativeDate} operativeShift={operativeShift} setOpTime={setOpTime} />

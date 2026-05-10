@@ -17,13 +17,9 @@ export function ConfirmedView({ testEmail }: { testEmail?: string }) {
     const [isEditingStation, setIsEditingStation] = React.useState(false);
 
     React.useEffect(() => {
-        async function fetchData() {
-            let userEmail = testEmail;
-            if (!userEmail) {
-                const { data: { session } } = await supabase.auth.getSession();
-                userEmail = session?.user?.email;
-            }
+        const fetchAll = async (userEmail: string) => {
             if (!userEmail) return;
+            setLoading(true);
 
             const { data: firefighter } = await supabase.from('firefighters').select('*, stations(*)').eq('email', userEmail).single();
             const { data: stationList } = await supabase.from('stations').select('*').order('name');
@@ -44,11 +40,24 @@ export function ConfirmedView({ testEmail }: { testEmail?: string }) {
                 setConfirmed(data || []);
             }
             setLoading(false);
-        }
-        fetchData();
+        };
 
-        const channel = supabase.channel('mobile-confirmed-sync')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_assignments' }, () => fetchData())
+        if (!testEmail) {
+            supabase.auth.getSession().then(({ data: { session } }) => {
+                if (session?.user?.email) fetchAll(session.user.email);
+            });
+        } else {
+            fetchAll(testEmail);
+        }
+
+        const channelName = `confirmed-sync-${testEmail || 'auth'}`;
+        const channel = supabase.channel(channelName)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_assignments' }, () => {
+                if (testEmail) fetchAll(testEmail);
+                else supabase.auth.getSession().then(({ data: { session } }) => {
+                    if (session?.user?.email) fetchAll(session.user.email);
+                });
+            })
             .subscribe();
 
         return () => {

@@ -253,10 +253,6 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
     if (!firefighters) return null;
 
     const { data: distData } = await supabase.from('station_distances').select('*');
-    const { data: stationsData } = await supabase.from('stations').select('id, name');
-    const nameToId: Record<string, number> = {};
-    stationsData?.forEach((s: any) => { nameToId[s.name] = s.id; });
-
     const distMatrix: DistanceMatrix = {};
     distData?.forEach((d: any) => {
         const distObj: Record<number, number> = {};
@@ -267,57 +263,13 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
         distMatrix[d.station_id] = distObj;
     });
 
-    const busyFFs = new Set<number>();
-    
-    // Fetch Availability to enforce constraints
-    const { data: dbAvailability } = await supabase.from('availability')
-        .select('firefighter_id, preferences')
-        .eq('date', targetDate)
-        .eq('shift_type', targetShift);
-
-    const availableFFMap = new Map<number, Set<string>>();
-    dbAvailability?.forEach((a: any) => {
-        let stIds = new Set<string>();
-        if (a.preferences && Array.isArray(a.preferences.stations)) {
-            stIds = new Set(a.preferences.stations.map(String));
-        }
-        availableFFMap.set(a.firefighter_id, stIds);
-    });
-
-    // Fetch Busy Assignments (if any exist for other requests not being rerun)
-    const { data: busyAssignments } = await supabase.from('ot_assignments')
-        .select('firefighter_id, ot_requests!inner(date, shift_type)')
-        .eq('ot_requests.date', targetDate)
-        .eq('ot_requests.shift_type', targetShift)
-        .in('status', ['assigned', 'accepted']);
-    busyAssignments?.forEach((a: any) => busyFFs.add(a.firefighter_id));
-
-    // Fetch Pending Offers (for other requests)
-    const { data: busyPendingOffers } = await supabase.from('ot_offers')
-        .select('firefighter_id, ot_requests!inner(date, shift_type)')
-        .eq('ot_requests.date', targetDate)
-        .eq('ot_requests.shift_type', targetShift)
-        .eq('status', 'sent');
-    busyPendingOffers?.forEach((o: any) => busyFFs.add(o.firefighter_id));
-
-    // Fetch Declined Offers (exclusions)
-    const requestExclusions: Record<number, Set<number>> = {};
-    const { data: declinedOffers } = await supabase.from('ot_offers')
-        .select('firefighter_id, ot_request_id')
-        .eq('status', 'declined');
-    declinedOffers?.forEach((o: any) => {
-        if (!requestExclusions[o.ot_request_id]) {
-            requestExclusions[o.ot_request_id] = new Set<number>();
-        }
-        requestExclusions[o.ot_request_id].add(o.firefighter_id);
-    });
-
     const ffs: Firefighter[] = firefighters.map((ff: any) => ({
         ...ff,
         station_name: ff.stations?.name || '',
         district: ff.stations?.district || '',
         area_id: ff.stations?.area_id || 0,
-        qualifications: typeof ff.qualifications === 'string' ? JSON.parse(ff.qualifications) : (ff.qualifications || {})
+        qualifications: typeof ff.qualifications === 'string' ? JSON.parse(ff.qualifications) : (ff.qualifications || {}),
+        preferences: ff.preferences || { districts: [], stations: [] }
     }));
 
     const otReqs: OTRequest[] = requests.map((r: any) => {
@@ -338,7 +290,64 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
         };
     });
 
-    const results = await allocateV2(otReqs, ffs, distMatrix, busyFFs, requestExclusions, availableFFMap);
+    // 1. Sort requests by "Difficulty to Fill" (Specialists first, then Officers, then FFs)
+    const sortedReqs = [...otReqs].sort((a: any, b: any) => {
+        const getPriority = (r: any) => {
+            if (r.specialist_type && r.specialist_type !== 'FF') return 0; // Specialists first
+            if (r.required_qualifications && r.required_qualifications.length > 0) return 1; // Qualified first
+            if (r.specialist_type === 'SSO') return 2;
+            if (r.specialist_type === 'SO') return 3;
+            return 10; // Regular FF last
+        };
+        return getPriority(a) - getPriority(b);
+    });
+
+    const busyFFs = new Set<number>();
+    
+    // Fetch Availability
+    const { data: dbAvailability } = await supabase.from('availability')
+        .select('firefighter_id, preferences')
+        .eq('date', targetDate)
+        .eq('shift_type', targetShift);
+
+    const availableFFMap = new Map<number, Set<string>>();
+    dbAvailability?.forEach((a: any) => {
+        let stIds = new Set<string>();
+        if (a.preferences && Array.isArray(a.preferences.stations)) {
+            stIds = new Set(a.preferences.stations.map(String));
+        }
+        availableFFMap.set(a.firefighter_id, stIds);
+    });
+
+    // Fetch Busy Assignments
+    const { data: busyAssignments } = await supabase.from('ot_assignments')
+        .select('firefighter_id, ot_requests!inner(date, shift_type)')
+        .eq('ot_requests.date', targetDate)
+        .eq('ot_requests.shift_type', targetShift)
+        .in('status', ['assigned', 'accepted']);
+    busyAssignments?.forEach((a: any) => busyFFs.add(a.firefighter_id));
+
+    // Fetch Pending Offers
+    const { data: busyPendingOffers } = await supabase.from('ot_offers')
+        .select('firefighter_id, ot_requests!inner(date, shift_type)')
+        .eq('ot_requests.date', targetDate)
+        .eq('ot_requests.shift_type', targetShift)
+        .eq('status', 'sent');
+    busyPendingOffers?.forEach((o: any) => busyFFs.add(o.firefighter_id));
+
+    // Fetch Declined Offers (exclusions)
+    const requestExclusions: Record<number, Set<number>> = {};
+    const { data: declinedOffers } = await supabase.from('ot_offers')
+        .select('firefighter_id, ot_request_id')
+        .eq('status', 'declined');
+    declinedOffers?.forEach((o: any) => {
+        if (!requestExclusions[o.ot_request_id]) {
+            requestExclusions[o.ot_request_id] = new Set<number>();
+        }
+        requestExclusions[o.ot_request_id].add(o.firefighter_id);
+    });
+
+    const results = await allocateV2(sortedReqs, ffs, distMatrix, busyFFs, requestExclusions, availableFFMap);
     
     const assignments: any[] = [];
     for (const res of results) {
@@ -359,4 +368,4 @@ export async function runAllocationEngine(targetDate: string, targetShift: 'Day'
     }
 
     return assignments;
-}
+}

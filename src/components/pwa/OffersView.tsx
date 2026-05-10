@@ -22,10 +22,23 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
     const [isSubmitting, setIsSubmitting] = React.useState(false);
 
     React.useEffect(() => {
-        fetchMyOffers();
+        if (!testEmail) {
+            // Only try to get session if not in matrix mode
+            supabase.auth.getSession().then(({ data: { session } }) => {
+                if (session?.user?.email) fetchMyOffers(session.user.email);
+            });
+        } else {
+            fetchMyOffers(testEmail);
+        }
 
-        const channel = supabase.channel('mobile-offers-sync')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_offers' }, () => fetchMyOffers())
+        const channelName = `offers-sync-${testEmail || 'auth'}`;
+        const channel = supabase.channel(channelName)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_offers' }, () => {
+                if (testEmail) fetchMyOffers(testEmail);
+                else supabase.auth.getSession().then(({ data: { session } }) => {
+                    if (session?.user?.email) fetchMyOffers(session.user.email);
+                });
+            })
             .subscribe();
 
         return () => {
@@ -33,16 +46,9 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
         };
     }, [testEmail]);
 
-    const fetchMyOffers = async () => {
-        setLoading(true);
-        let userEmail = testEmail;
-        
-        if (!userEmail) {
-            const { data: { session } } = await supabase.auth.getSession();
-            userEmail = session?.user?.email;
-        }
-
+    const fetchMyOffers = async (userEmail: string) => {
         if (!userEmail) return;
+        setLoading(true);
 
         // 2. Find their firefighter ID
         const { data: ff } = await supabase.from('firefighters').select('id').eq('email', userEmail).single();
@@ -78,7 +84,8 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
             });
             const data = await res.json();
             if (!data.success) throw new Error(data.error);
-            await fetchMyOffers();
+            const userEmail = testEmail || (await supabase.auth.getSession()).data.session?.user?.email || "";
+            await fetchMyOffers(userEmail);
         } catch (err: any) {
             alert(`Failed to accept: ${err.message}`);
         } finally {
@@ -109,7 +116,8 @@ export function OffersView({ testEmail }: { testEmail?: string }) {
             if (!data.success) throw new Error(data.error);
 
             setDeclineDialogOpen(false);
-            await fetchMyOffers();
+            const userEmail = testEmail || (await supabase.auth.getSession()).data.session?.user?.email || "";
+            await fetchMyOffers(userEmail);
         } catch (err: any) {
             alert(`Failed to decline: ${err.message}`);
         } finally {
