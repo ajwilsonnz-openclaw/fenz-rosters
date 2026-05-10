@@ -476,7 +476,7 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                             if (pendingRemoval.size > 0 && !isAdding && !pendingUpdate.size) {
                                 handleFinalSubmit();
                             } else {
-                                setIsConfirmOpen(true);
+                                handleOpenConfirm();
                             }
                         }
                     }}
