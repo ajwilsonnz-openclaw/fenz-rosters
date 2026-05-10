@@ -379,7 +379,7 @@ export function AvailabilityView({ testEmail, isMatrix = false }: { testEmail?: 
                             if (isNew) cardStyles = "border-[#005DAC] border-2 bg-white";
                             else if (isForRemoval) cardStyles = "border-red-600 border-2 bg-red-50";
                             else if (isForUpdate) cardStyles = "border-green-600 border-2 bg-green-50";
-                            else if (isSaved) cardStyles = "border-slate-300 bg-slate-100";
+                            else if (isSaved) cardStyles = "border-slate-300 bg-slate-200";
 
                             const handlePointerDown = (e: React.PointerEvent) => {
                                 if (!isSaved || isAdding) return;

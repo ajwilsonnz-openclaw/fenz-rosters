@@ -159,29 +159,59 @@ export default function DateToolbar({ operativeDate, operativeShift, setOpTime }
       {isCalendarOpen && (
         <>
           <div className="fixed inset-0 z-[60]" onClick={() => setIsCalendarOpen(false)} />
-          <div className="absolute top-full left-[620px] -translate-x-1/2 mt-3 bg-white border border-gray-200 shadow-2xl rounded-2xl p-6 z-[70] w-[340px]">
-            <div className="flex items-center justify-between mb-6 px-1">
-              <button onClick={() => { const d = new Date(calendarViewDate); d.setMonth(d.getMonth() - 1); setCalendarViewDate(d); }} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400"><ChevronLeft className="w-5 h-5" /></button>
-              <span className="text-[11px] font-black uppercase text-gray-900 tracking-widest">{calendarViewDate.toLocaleDateString('en-NZ', { month: 'long', year: 'numeric' })}</span>
-              <button onClick={() => { const d = new Date(calendarViewDate); d.setMonth(d.getMonth() + 1); setCalendarViewDate(d); }} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400"><ChevronRight className="w-5 h-5" /></button>
+          <div className="absolute top-full left-[620px] -translate-x-1/2 mt-3 bg-white border border-gray-100 shadow-2xl rounded-[32px] p-8 z-[70] w-[380px]">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-8 px-2">
+              <button onClick={() => { const d = new Date(calendarViewDate); d.setMonth(d.getMonth() - 1); setCalendarViewDate(d); }} className="p-2 hover:bg-gray-50 rounded-xl text-gray-400 transition-colors"><ChevronLeft className="w-5 h-5" /></button>
+              <span className="text-sm font-black uppercase text-gray-900 tracking-[0.2em]">{calendarViewDate.toLocaleDateString('en-NZ', { month: 'long', year: 'numeric' })}</span>
+              <button onClick={() => { const d = new Date(calendarViewDate); d.setMonth(d.getMonth() + 1); setCalendarViewDate(d); }} className="p-2 hover:bg-gray-50 rounded-xl text-gray-400 transition-colors"><ChevronRight className="w-5 h-5" /></button>
             </div>
-            <div className="grid grid-cols-7 gap-1 text-center text-[10px] mb-4">
-              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, idx) => <div key={`${d}-${idx}`} className="font-black text-gray-300">{d}</div>)}
-              {calendarDays.map((day, i) => (
-                <div key={i} className="flex items-center justify-center">
-                  {day ? (
-                    <button onClick={() => { handleSetOpTime({ date: day.date, shift: operativeShift }); setIsCalendarOpen(false); }} className={`w-9 h-9 flex items-center justify-center font-black rounded-xl transition-all relative ${day.date.toDateString() === operativeDate.toDateString() ? 'bg-gray-900 text-white shadow-lg' : 'text-gray-700 hover:bg-gray-50'}`}>
-                      {day.day}
-                      <div className="absolute bottom-1 w-4 h-1 rounded-full" style={{ backgroundColor: day.color }} />
-                    </button>
-                  ) : <div className="w-9 h-9" />}
-                </div>
+
+            {/* Day Headers */}
+            <div className="grid grid-cols-7 gap-2 text-center mb-4 px-1">
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, idx) => (
+                <div key={`${d}-${idx}`} className="text-[10px] font-black text-gray-300 uppercase tracking-widest">{d}</div>
               ))}
             </div>
-            <div className="flex items-center justify-center mb-2">
-              <div className="flex bg-gray-100 p-1 rounded-xl border border-gray-200">
-                <button onClick={() => handleSetOpTime({ date: operativeDate, shift: 'Day' })} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${operativeShift === 'Day' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}><Sun className="w-3 h-3" /> Day</button>
-                <button onClick={() => handleSetOpTime({ date: operativeDate, shift: 'Night' })} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase transition-all flex items-center gap-2 ${operativeShift === 'Night' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}><Moon className="w-3 h-3" /> Night</button>
+
+            {/* Calendar Grid */}
+            <div className="grid grid-cols-7 gap-2 mb-8">
+              {calendarDays.map((day, i) => {
+                const isSelected = day?.date.toDateString() === operativeDate.toDateString();
+                return (
+                  <div key={i} className="flex items-center justify-center">
+                    {day ? (
+                      <button 
+                        onClick={() => { handleSetOpTime({ date: day.date, shift: operativeShift }); setIsCalendarOpen(false); }} 
+                        className={`w-10 h-10 flex items-center justify-center font-black rounded-xl transition-all text-white text-sm relative ${isSelected ? '' : 'hover:scale-105 active:scale-95'}`}
+                        style={{ backgroundColor: day.color }}
+                      >
+                        {day.day}
+                        {isSelected && <div className="absolute inset-0 border-2 border-black rounded-xl pointer-events-none" />}
+                      </button>
+                    ) : <div className="w-10 h-10" />}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Bottom Toggle */}
+            <div className="flex items-center justify-center">
+              <div className="flex bg-gray-50 p-1.5 rounded-2xl border border-gray-100 shadow-inner">
+                <button 
+                  onClick={() => handleSetOpTime({ date: operativeDate, shift: 'Day' })} 
+                  className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${operativeShift === 'Day' ? 'bg-white shadow-md text-gray-900 border border-gray-100' : 'text-gray-400 hover:text-gray-500'}`}
+                >
+                  <Sun className={`w-3.5 h-3.5 ${operativeShift === 'Day' ? 'text-gray-900' : 'text-gray-400'}`} /> 
+                  Day
+                </button>
+                <button 
+                  onClick={() => handleSetOpTime({ date: operativeDate, shift: 'Night' })} 
+                  className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${operativeShift === 'Night' ? 'bg-white shadow-md text-gray-900 border border-gray-100' : 'text-gray-400 hover:text-gray-500'}`}
+                >
+                  <Moon className={`w-3.5 h-3.5 ${operativeShift === 'Night' ? 'text-gray-900' : 'text-gray-400'}`} /> 
+                  Night
+                </button>
               </div>
             </div>
           </div>
