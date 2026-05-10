@@ -13,11 +13,11 @@ export default function PWALayout({ children }: { children: React.ReactNode }) {
 
   // Dynamically set the title based on the current mobile tab
   let title = "FENZ OT";
-  if (pathname === '/availability' || pathname === '/') title = "AVAILABILITY";
-  if (pathname === '/offers') title = "OVERTIME OFFERS";
-  if (pathname === '/confirmed') title = "MY ROSTER";
-  if (pathname === '/profile') title = "PROFILE";
-  if (pathname === '/notifications') title = "NOTIFICATIONS";
+  if (pathname === '/mobile/availability' || pathname === '/mobile') title = "AVAILABILITY";
+  if (pathname === '/mobile/offers') title = "OVERTIME OFFERS";
+  if (pathname === '/mobile/confirmed') title = "MY ROSTER";
+  if (pathname === '/mobile/profile') title = "PROFILE";
+  if (pathname === '/mobile/notifications') title = "NOTIFICATIONS";
 
   const router = useRouter();
   const [isAuth, setIsAuth] = useState(false);

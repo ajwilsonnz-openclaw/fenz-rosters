@@ -26,17 +26,17 @@ const TEST_USERS = [
 ];
 
 function MobileFrame({ email }: { email: string }) {
-  const [currentTab, setCurrentTab] = React.useState('/availability');
+  const [currentTab, setCurrentTab] = React.useState('/mobile/availability');
 
   const renderContent = () => {
     switch (currentTab) {
-      case '/profile':
+      case '/mobile/profile':
         return <ProfileView testEmail={email} />;
-      case '/offers':
+      case '/mobile/offers':
         return <OffersView testEmail={email} />;
-      case '/confirmed':
+      case '/mobile/confirmed':
         return <ConfirmedView testEmail={email} />;
-      case '/availability':
+      case '/mobile/availability':
       default:
         return <AvailabilityView testEmail={email} isMatrix={true} />;
     }
@@ -44,10 +44,10 @@ function MobileFrame({ email }: { email: string }) {
 
   const getTitle = () => {
     switch (currentTab) {
-      case '/profile': return 'PROFILE';
-      case '/offers': return 'OFFERS';
-      case '/confirmed': return 'ROSTER';
-      case '/availability':
+      case '/mobile/profile': return 'PROFILE';
+      case '/mobile/offers': return 'OFFERS';
+      case '/mobile/confirmed': return 'ROSTER';
+      case '/mobile/availability':
       default: return 'AVAILABILITY';
     }
   };

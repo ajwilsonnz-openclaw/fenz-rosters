@@ -2,7 +2,7 @@
     "name": "Rosters",
     "short_name": "Rosters",
     "description": "Fire and Emergency NZ Rosters",
-    "start_url": "/offers",
+    "start_url": "/mobile/offers",
     "display": "standalone",
     "background_color": "#f8fafc",
     "theme_color": "#005DAC",

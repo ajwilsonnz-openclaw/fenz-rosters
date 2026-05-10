@@ -12,10 +12,10 @@ export default function BottomNav({ className, currentTab, onNavigate, testEmail
     const activePath = currentTab || pathname;
 
     const navItems = [
-        { label: 'Availability', href: '/availability', icon: CalendarCheck },
-        { label: 'Offers', href: '/offers', icon: Inbox },
-        { label: 'Roster', href: '/confirmed', icon: CalendarDays },
-        { label: 'Profile', href: '/profile', icon: UserCircle },
+        { label: 'Availability', href: '/mobile/availability', icon: CalendarCheck },
+        { label: 'Offers', href: '/mobile/offers', icon: Inbox },
+        { label: 'Roster', href: '/mobile/confirmed', icon: CalendarDays },
+        { label: 'Profile', href: '/mobile/profile', icon: UserCircle },
     ];
 
     const [pendingCount, setPendingCount] = React.useState(0);
@@ -63,7 +63,7 @@ export default function BottomNav({ className, currentTab, onNavigate, testEmail
         )}>
             <div className="flex justify-around items-center h-16">
                 {navItems.map((item) => {
-                    const isActive = activePath === item.href || (activePath === '/' && item.href === '/availability');
+                    const isActive = activePath === item.href || (activePath === '/mobile' && item.href === '/mobile/availability');
                     const Icon = item.icon;
 
                     if (onNavigate) {

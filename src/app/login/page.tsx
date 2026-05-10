@@ -58,7 +58,7 @@ export default function LoginPage() {
             return;
         }
 
-        router.push("/availability");
+        router.push("/mobile/availability");
     };
 
     return (
